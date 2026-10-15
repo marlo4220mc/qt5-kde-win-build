@@ -58,9 +58,9 @@ jobs:
           "call `"$vs\VC\Auxiliary\Build\vcvarsall.bat`" $args && set" | Set-Content $bat -Encoding ASCII
           $out = cmd /c $bat
           $cl = ($out | Select-String -Pattern 'VCToolsVersion=([\d.]+)').Matches[0].Groups[1].Value
-          Write-Host "VCToolsVersion = $cl"
+          Write-Host "VCToolsVersion = $cl"   # sin ${}: aqui no hay dos puntos detras
           if ('${{ matrix.arch }}' -eq 'x86' -and -not $cl.StartsWith('14.29')) {
-            throw "el x86 necesita el toolset v142 (14.29.x) y hay $cl: el binario no seria Win7"
+            throw "el x86 necesita el toolset v142 (14.29.x) y hay ${cl}: el binario no seria Win7"
           }
           Write-Host "cl $cl listo"
 
