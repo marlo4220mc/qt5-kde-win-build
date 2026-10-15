@@ -93,28 +93,25 @@ function Install-Perl([string]$ToolsDir) {
     $zip = Join-Path $ToolsDir ('strawberry-perl-' + $sp.version + '-portable.zip')
     Get-Verified $sp.url $zip $sp.sha256 ('Strawberry Perl ' + $sp.version) | Out-Null
 
+    # Se descomprime YA en <tools>\sp, que es la raiz que la receta espera
+    # (<raiz>\perl\bin\perl.exe). El zip no trae un nivel 'sp/', asi que
+    # descomprimir en <tools> dejaba perl.exe un nivel mas arriba; moverlo
+    # despues no sirve, porque en ese caso la raiz ES <tools> y un directorio no
+    # se puede mover dentro de si mismo.
+    $spDir = Join-Path $ToolsDir 'sp'
     Say 'descomprimiendo Perl (~1 min)'
-    New-Item -ItemType Directory -Force -Path $ToolsDir | Out-Null
-    Expand-Archive -LiteralPath $zip -DestinationPath $ToolsDir -Force
+    New-Item -ItemType Directory -Force -Path $spDir | Out-Null
+    Expand-Archive -LiteralPath $zip -DestinationPath $spDir -Force
 
-    # El zip no trae un nivel 'sp/', y como lo empaquete Strawberry cambia. Se
-    # busca perl.exe y se deduce la raiz a partir de el, que es lo unico que la
-    # receta necesita: <raiz>\perl\bin\perl.exe. Si no coincide, se mueve.
+    # Si aun asi no esta, se busca y se dice DONDE esta, en vez de un "no
+    # encuentro perl.exe" que no ayuda.
     if (-not (Test-Path $perlExe)) {
-        $encontrado = Get-ChildItem $ToolsDir -Recurse -Filter 'perl.exe' -File -ErrorAction SilentlyContinue |
-                      Where-Object { $_.Directory.Name -eq 'bin' -and $_.Directory.Parent.Name -eq 'perl' } |
+        $cualquiera = Get-ChildItem $spDir -Recurse -Filter 'perl.exe' -File -ErrorAction SilentlyContinue |
                       Select-Object -First 1
-        if (-not $encontrado) {
-            $cualquiera = Get-ChildItem $ToolsDir -Recurse -Filter 'perl.exe' -File -ErrorAction SilentlyContinue |
-                          Select-Object -First 1
-            if (-not $cualquiera) { throw ('el zip no contiene ningun perl.exe bajo ' + $ToolsDir) }
-            throw ('perl.exe esta en ' + $cualquiera.FullName +
-                   ' pero la receta necesita <raiz>\perl\bin\perl.exe (dos niveles por encima del fichero)')
-        }
-        $raizReal = $encontrado.Directory.Parent.Parent.FullName
-        $raizEsperada = Join-Path $ToolsDir 'sp'
-        Say ('el zip descomprimio con otra forma; moviendo ' + $raizReal + ' -> ' + $raizEsperada)
-        Move-Item $raizReal $raizEsperada -Force
+        if (-not $cualquiera) { throw ('el zip no contiene ningun perl.exe bajo ' + $spDir) }
+        throw ('perl.exe quedo en ' + $cualquiera.FullName +
+               ' pero la receta necesita ' + $perlExe +
+               ' (dos niveles por encima del fichero, con un directorio perl en medio)')
     }
     if (-not (Test-Path $perlExe)) { throw ('no quedo perl.exe en ' + $perlExe + ' tras descomprimir') }
 
