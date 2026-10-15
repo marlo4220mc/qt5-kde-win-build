@@ -1,0 +1,3 @@
+# Los arboles de Qt se vendorizan en el repo que los consume, no aqui. Aqui solo
+# hay dos binarios, y son binarios.
+prebuilt/angle/*.dll -text

@@ -17,6 +17,10 @@ on:
 permissions:
   contents: read
   issues: write
+  # Para lanzar rebuild.yml. Es el MISMO repo, asi que GITHUB_TOKEN llega; a un
+  # repositorio de la app no llegaria, y por eso el consumo sigue siendo un paso
+  # explicito en lugar de un push automatico.
+  actions: write
 
 jobs:
   check:
@@ -126,3 +130,13 @@ jobs:
               owner: context.repo.owner, repo: context.repo.repo,
               title: titulo, body: cuerpo,
             });
+
+            // Y lanza la reconstruccion. Automatizar esto SI tiene sentido: es el
+            // motivo de que el watcher exista. Lo que NO se automatiza es el push
+            // al repo consumidor, porque ese si necesitaria un PAT de otro repo.
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner, repo: context.repo.repo,
+              workflow_id: 'rebuild.yml',
+              ref: 'main',
+            });
+            core.info('reconstruccion lanzada (rebuild.yml, las dos arquitecturas)');

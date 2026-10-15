@@ -1,0 +1,53 @@
+{
+  "_comment": [
+    "Todo lo que el bootstrap descarga, con su hash. Nada se baja sin fijar.",
+    "Un hash aqui no es cache: es la garantia de que lo que se compila es lo que",
+    "dice ser. Si el fichero ya esta y el hash no cuadra, se borra y se vuelve a",
+    "bajar; si no hay hash, el bootstrap se niega a descargar.",
+    "",
+    "Los digest de Strawberry salen de la propia API de GitHub (campo `digest` del",
+    "release asset), el de OpenSSL de openssl.org, y el del tarball de Qt se",
+    "verifico al bajarlo."
+  ],
+
+  "qtOfficialVersion": "5.15.19",
+  "qtOfficialTarballSha256": "51e91c73abacab81e64efd01bf95794e79c0e605ad80947a024769f0dd620a32",
+
+  "openssl": {
+    "version": "3.5.9",
+    "url": "https://github.com/openssl/openssl/releases/download/openssl-3.5.9/openssl-3.5.9.tar.gz",
+    "sha256": "603f5602e2eef00d77fbd429d34dcd5822bb301757a1bc9cdb24c670f1eb859a",
+    "_source": "sha256 publicado en https://www.openssl.org/source/openssl-3.5.9.tar.gz.sha256",
+    "_whyBuilt": [
+      "Se compila desde el fuente con el mismo toolset en vez de bajarse un",
+      "binario de un tercero. Es lo unico que no depende de que alguien mantenga",
+      "un build precompilado, y son ~8 minutos por arquitectura.",
+      "Se compila no-shared porque Qt usa -openssl-runtime: en ejecucion carga las",
+      "DLL que trae la app, y en compilacion solo hacen falta los headers y los",
+      ".lib de importacion."
+    ]
+  },
+
+  "strawberryPerl": {
+    "version": "5.40.5.1",
+    "releaseTag": "SP_54051_64bit",
+    "url": "https://github.com/StrawberryPerl/Perl-Dist-Strawberry/releases/download/SP_54051_64bit/strawberry-perl-5.40.5.1-64bit-portable.zip",
+    "sha256": "6619fe7eeef921ccddb4aac3972fb602a0c690a3074205b863ade998d7bc79a6",
+    "_source": "digest del asset en la API de GitHub",
+    "_whyPortable": "el zip portable no deja rastro en el sistema ni necesita instalador, que es lo que permite cachearlo en un runner",
+    "_whyThisPerl": [
+      "Tiene que ser el NATIVO. El Perl de Git es una build MSYS y",
+      "Cwd::getcwd() devuelve /c/...; syncqt.pl usa eso como srcbase y los",
+      "forwarding headers salen corruptos, con lo que el build muere mas tarde",
+      "con C1083 en un modulo que no parece tener relacion con Perl.",
+      "Es de 64 bits a proposito: es el Perl del HOST que ejecuta syncqt, no",
+      "una toolchain para generar codigo x86."
+    ]
+  },
+
+  "angle": {
+    "_comment": "vendorizados en prebuilt/angle/, no se descargan. Ver su README.",
+    "libEGL.dll": "e0dbd583537658891ce62098ecae7ceee81c61f5ce795168fb5e60d0a0759829",
+    "libGLESv2.dll": "b197f8cdf85fe02c22154ff5ee0cc1d9b5f65f57b5834f726a9e2704d78d6962"
+  }
+}

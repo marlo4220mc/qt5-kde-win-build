@@ -1,18 +1,17 @@
 {
   "_comment": [
-    "Single source of truth for the Qt sources that the vendored trees in",
-    "marlo4220mc/nevertube_qt2 (third_party/qt-win32 and third_party/qt-win64)",
-    "were built from. The BOM.json inside each vendored tree is a COPY of this,",
-    "written by build-qt-win.ps1 at build time.",
+    "Single source of truth for the Qt sources that the published trees were built",
+    "from. The BOM.json inside each published tree is a COPY of this, written by",
+    "build-qt-win.ps1 at build time.",
     "",
-    "It lives here and not in the app repo on purpose: the watcher needs to read",
-    "it from a workflow, and GITHUB_TOKEN cannot reach another repository. Making",
-    "this the origin instead of reading the app repo removes the cross-repo",
-    "token problem and the two-file drift that would come with it.",
+    "It lives in its own repository and not inside a consumer's tree because the",
+    "watcher needs to read it from a workflow, and GITHUB_TOKEN cannot reach",
+    "another repository. Making this the origin also removes the cross-repo token",
+    "problem and the two-file drift that would come with it.",
     "",
-    "Commits are PINNED, not the branch tip. That is what makes 'Windows and",
-    "Linux ship the same Qt' true by construction instead of true only on the",
-    "day someone compiled. These are the commits the Arch Linux package builds",
+    "Commits are PINNED, not the branch tip. That is what makes 'Windows and Linux",
+    "ship the same Qt' true by construction instead of true only on the day",
+    "someone compiled. These are the commits the Arch Linux package builds",
     "qt5-base / qt5-tools / qt5-imageformats / qt5-multimedia from."
   ],
   "branch": "kde/5.15",
@@ -64,12 +63,13 @@
       "corte 5.15.19, no solo parches."
     ]
   },
-  "vendored": {
-    "app": "marlo4220mc/nevertube_qt2",
-    "paths": {
-      "x86": "third_party/qt-win32",
-      "x64": "third_party/qt-win64"
-    },
-    "bom": "BOM.json inside each tree records this same file's content"
-  }
+  "consuming": [
+    "The published trees are plain Qt prefixes: drop one next to your project and",
+    "point your build at it (CMake: -DCMAKE_PREFIX_PATH=<tree> ; qmake: use its",
+    "bin/qmake.exe). Nothing in them depends on this repository.",
+    "",
+    "Each tree carries a BOM.json recording exactly what went into it, including",
+    "the per-module commit and the SHA-256 of the archive that commit produces.",
+    "That BOM is the provenance record, and it is generated, not hand written."
+  ]
 }

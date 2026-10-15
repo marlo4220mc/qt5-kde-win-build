@@ -1,0 +1,225 @@
+# Reconstruye Qt desde la rama kde/5.15 y publica los dos arboles en una release.
+#
+# Se dispara a mano, o desde watch-kde.yml cuando la rama avanza. Nunca pushes a
+# ningun otro repositorio: el consumo es un paso explicito de quien lo quiera,
+# porque automatizar eso exigiria un PAT de otro repo y seria justo el tipo de
+# acoplamiento invisible que hizo que el BOM antiguo mintiera.
+name: rebuild
+
+on:
+  workflow_dispatch:
+    inputs:
+      arch:
+        description: 'x64, x86, o vacio para las dos'
+        type: string
+        default: ''
+      reason:
+        description: 'Por que se reconstruye (queda en el log de la release)'
+        type: string
+        default: 'reconstruccion manual'
+
+  # watch-kde.yml dispara esto cuando detecta un commit nuevo. Es el mismo repo,
+  # asi que GITHUB_TOKEN llega; a otro repositorio no llegaria.
+  repository_dispatch:
+    types: [kde-commit-changed]
+
+permissions:
+  contents: write   # para crear la release
+  actions: read
+
+concurrency:
+  group: rebuild-qt
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: ${{ matrix.arch }}
+    runs-on: windows-2022
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        # Manual con 'x86' construye solo x86; vacio o repository_dispatch, las dos.
+        arch: ${{ fromJSON(github.event.inputs.arch == 'x86' && '["x86"]' || github.event.inputs.arch == 'x64' && '["x64"]' || '["x64","x86"]') }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # El toolset v142 (VS2019) es obligatorio para el x86: Win7 no carga un
+      # binario compilado con el toolset moderno (14.5x importa GetSystem-
+      # TimePreciseAsFileTime, que es Win8+). windows-2022 lo trae.
+      - name: Comprobar el toolset antes de empezar
+        shell: pwsh
+        run: |
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+          $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $vs) { throw 'sin Visual Studio con las herramientas de C++' }
+          $bat = Join-Path $env:RUNNER_TEMP 'vc.bat'
+          $args = if ('${{ matrix.arch }}' -eq 'x86') { 'x86 -vcvars_ver=14.29 10.0.19041.0' } else { 'x64' }
+          "call `"$vs\VC\Auxiliary\Build\vcvarsall.bat`" $args && set" | Set-Content $bat -Encoding ASCII
+          $out = cmd /c $bat
+          $cl = ($out | Select-String -Pattern 'VCToolsVersion=([\d.]+)').Matches[0].Groups[1].Value
+          Write-Host "VCToolsVersion = $cl"
+          if ('${{ matrix.arch }}' -eq 'x86' -and -not $cl.StartsWith('14.29')) {
+            throw "el x86 necesita el toolset v142 (14.29.x) y hay $cl: el binario no seria Win7"
+          }
+          Write-Host "cl $cl listo"
+
+      - name: Bootstrap (Perl, OpenSSL, tarball oficial)
+        shell: pwsh
+        run: |
+          ./ci/bootstrap.ps1 -Arch '${{ matrix.arch }}' -Root "$env:RUNNER_TEMP\qtbuild"
+
+      - name: Cache del arbol de trabajo
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}\qtbuild\work
+          key: qt-work-${{ matrix.arch }}-${{ hashFiles('qt-sources.json') }}
+          restore-keys: |
+            qt-work-${{ matrix.arch }}-
+
+      - name: Cache de las herramientas y el OpenSSL
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ runner.temp }}\qtbuild\tools
+            ${{ runner.temp }}\qtbuild\openssl
+            ${{ runner.temp }}\qtbuild\toolgrab
+          key: qt-bootstrap-${{ matrix.arch }}-${{ hashFiles('ci/bootstrap-hashes.json') }}
+          restore-keys: |
+            qt-bootstrap-${{ matrix.arch }}-
+
+      - name: Construir
+        shell: pwsh
+        run: |
+          $r = "$env:RUNNER_TEMP\qtbuild"
+          .\build-qt-win.ps1 `
+            -Arch '${{ matrix.arch }}' `
+            -Work "$r\work\${{ matrix.arch }}" `
+            -Dest "$r\out\qt-win${{ matrix.arch }}" `
+            -StrawberryPerl "$r\tools\sp" `
+            -OpenSslRoot "$r\openssl" `
+            -QtOfficialTarball "$r\toolgrab\qtbase-official-5.15.19.tar.xz" `
+            -AngleBin "$env:GITHUB_WORKSPACE\prebuilt\angle"
+
+      # El BOM es la parte que hay que mirar de verdad: si los commits del arbol
+      # no son los de qt-sources.json, el arbol no es el que creemos y no se
+      # publica aunque el build haya salido bien.
+      - name: Verificar el BOM contra qt-sources.json
+        shell: pwsh
+        run: |
+          $dest = "$env:RUNNER_TEMP\qtbuild\out\qt-win${{ matrix.arch }}"
+          $bom = Get-Content (Join-Path $dest 'BOM.json') -Raw | ConvertFrom-Json
+          $src = Get-Content 'qt-sources.json' -Raw | ConvertFrom-Json
+          $mal = @()
+          foreach ($m in $bom.qt.modules.PSObject.Properties) {
+            $pijado = $src.modules.($m.Name)
+            if ($m.Value.commit -ne $pijado) { $mal += "$($m.Name): $($m.Value.commit) != $pijado" }
+            if (-not $m.Value.archiveSha256) { $mal += "$($m.Name): sin archiveSha256" }
+          }
+          if ($bom.qt.version -ne $src.versionLabel) {
+            $mal += "version: $($bom.qt.version) != $($src.versionLabel)"
+          }
+          Write-Host "BOM version : $($bom.qt.version)"
+          Write-Host "BOM toolset : $($bom.qt.toolset)"
+          Write-Host "modulos     : $(($bom.qt.modules.PSObject.Properties.Name) -join ', ')"
+          if ($mal.Count -gt 0) {
+            Write-Host '::error::el BOM no cuadra con qt-sources.json'
+            $mal | ForEach-Object { Write-Host "  $_" }
+            exit 1
+          }
+          Write-Host 'OK: el BOM coincide con qt-sources.json'
+
+      # Lo que no se puede comprobar leyendo un fichero: que las DLL no importen
+      # simbolos posteriores a Win7. El link de un ejecutable de 64 bits no puede
+      # importar nada de Win7, asi que el gate solo tiene sentido en el x86.
+      - name: Gate de imports Win7
+        if: matrix.arch == 'x86'
+        shell: pwsh
+        run: |
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+          $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          $bat = Join-Path $env:RUNNER_TEMP 'dump.bat'
+          $bin = "$env:RUNNER_TEMP\qtbuild\out\qt-winx86\bin"
+          @(
+            '@echo off'
+            "call `"$vs\VC\Auxiliary\Build\vcvarsall.bat`" x86 -vcvars_ver=14.29 10.0.19041.0 >nul 2>&1"
+            "for %%f in (`"$bin\*.dll`") do @dumpbin /nologo /dependents %%f > `"$env:RUNNER_TEMP\d.txt`" 2>nul & findstr /i `"api-ms-win-core-winrt-l1-1-0 api-ms-win-core-winrt-string-l1-1-0 api-ms-win-core-winrt-stringinternal-l1-1-0 roapi.h combase.dll api-ms-win-core-winrt-utility apisetschema" `"$env:RUNNER_TEMP\d.txt`" >> `"$env:RUNNER_TEMP\postwin7.txt`""
+            'exit /b 0'
+          ) | Set-Content $bat -Encoding ASCII
+          Remove-Item "$env:RUNNER_TEMP\dump-all.txt" -ErrorAction SilentlyContinue
+          cmd /c $bat | Out-Null
+
+          # /dependents lista MODULOS. En Win7 no existen ni api-ms-win-core-winrt*
+          # ni combase.dll: importarlos es exactamente lo que rompe en la
+          # maquina de destino, con un error de carga que no dice nada de Qt.
+          $postWin7 = @('api-ms-win-core-winrt','combase.dll','api-ms-win-core-winrt-utility',
+                        'RoGetActivationFactory','GetSystemTimePreciseAsFileTime')
+          $todo = Get-Content "$env:RUNNER_TEMP\dump-all.txt" -ErrorAction SilentlyContinue
+          $mal = @()
+          foreach ($m in $postWin7) {
+            $hit = $todo | Select-String -SimpleMatch $m
+            if ($hit) { $mal += $hit | Select-Object -First 3 | ForEach-Object { $_.Line.Trim() } }
+          }
+          if ($mal.Count -gt 0) {
+            Write-Host '::error::importaciones posteriores a Win7'
+            $mal | Select-Object -Unique | Select-Object -First 15 | ForEach-Object { Write-Host "  $_" }
+            exit 1
+          }
+          Write-Host ('OK: ' + (($todo | Select-String -Pattern '^\s+\S+\.dll\s*$').Count) + ' DLL revisadas, ninguna importa simbolos posteriores a Win7')
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qt-win${{ matrix.arch }}
+          path: ${{ runner.temp }}\qtbuild\out\qt-win${{ matrix.arch }}
+          retention-days: 30
+          if-no-files-found: error
+
+  publish:
+    name: publicar release
+    needs: build
+    runs-on: ubuntu-latest
+    if: success()
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Empaquetar cada arbol
+        run: |
+          set -euo pipefail
+          cd dist
+          for d in qt-win*; do
+            zip -q -r "$d.zip" "$d"
+            echo "  $d.zip  $(du -h "$d.zip" | cut -f1)"
+          done
+      - name: Componer el manifiesto y crear la release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LABEL: ${{ inputs.reason || github.event.client_payload.reason || 'actualizacion de la rama kde/5.15' }}
+        run: |
+          set -euo pipefail
+          cd dist
+          echo "### Artefactos"  >> NOTAS.md
+          echo ""                >> NOTAS.md
+          for d in qt-win*; do
+            echo "- \`$d/\` ($(find "$d" -type f | wc -l) ficheros)" >> NOTAS.md
+          done
+          echo "" >> NOTAS.md
+          echo "Consumir: descomprimir el arbol que corresponda junto al proyecto y" >> NOTAS.md
+          echo "usar su \`BOM.json\` como registro de procedencia. El contenido de" >> NOTAS.md
+          echo "esta release es exactamente el del commit marcado en \`qt-sources.json\`." >> NOTAS.md
+
+          SHA=$(python3 -c "import json;d=json.load(open('../qt-sources.json'));print(' | '.join(f'{k} {v[:12]}' for k,v in sorted(d['modules'].items())))")
+          VER=$(python3 -c "import json;print(json.load(open('../qt-sources.json'))['versionLabel'])")
+          TAG="qt5-$VER-$(date -u +%Y%m%d%H%M)"
+
+          echo "version: $VER"
+          echo "commits: $SHA"
+          git -C "$GITHUB_WORKSPACE" tag -a "$TAG" -m "$VER: $LABEL"
+          git -C "$GITHUB_WORKSPACE" push origin "$TAG"
+
+          gh release create "$TAG" \
+            --title "Qt $VER ($LABEL)" \
+            --notes-file NOTAS.md \
+            qt-winx64.zip qt-winx86.zip
