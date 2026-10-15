@@ -91,8 +91,36 @@ function Install-Perl([string]$ToolsDir) {
     Say 'descomprimiendo Perl (~1 min)'
     New-Item -ItemType Directory -Force -Path $ToolsDir | Out-Null
     Expand-Archive -LiteralPath $zip -DestinationPath $ToolsDir -Force
+
+    # El zip no trae un nivel 'sp/': lo que hay dentro depende de como lo
+    # empaquete Strawberry, y adivinarlo da un error que no dice donde esta. Se
+    # busca perl.exe y se deduce la raiz a partir de el, que es lo unico que la
+    # receta necesita: <raiz>/perl/bin/perl.exe. Si no coincide, se mueve.
+    if (-not (Test-Path $perlExe)) {
+        $encontrado = Get-ChildItem $ToolsDir -Recurse -Filter 'perl.exe' -File -ErrorAction SilentlyContinue |
+                      Where-Object { $_.Directory.Name -eq 'bin' -and $_.Directory.Parent.Name -eq 'perl' } |
+                      Select-Object -First 1
+        if (-not $encontrado) {
+            $cualquiera = Get-ChildItem $ToolsDir -Recurse -Filter 'perl.exe' -File -ErrorAction SilentlyContinue |
+                          Select-Object -First 1
+            if (-not $cualquiera) { throw "el zip no contiene ningun perl.exe bajo $ToolsDir" }
+            throw ("perl.exe esta en " + $cualquiera.FullName +
+                   " pero la receta necesita <raiz>\perl\bin\perl.exe (dos niveles por encima del fichero)")
+        }
+        $raizReal = $encontrado.Directory.Parent.Parent.FullName
+        $raizEsperada = Join-Path $ToolsDir 'sp'
+        Say "el zip descomprimio en otra forma; moviendo $raizReal -> $raizEsperada"
+        New-Item -ItemType Directory -Force -Path (Split-Path $raizEsperada -Parent) | Out-Null
+        Move-Item $raizReal $raizEsperada -Force
+    }
     if (-not (Test-Path $perlExe)) { throw "no quedo perl.exe en $perlExe tras descomprimir" }
-    Say 'Perl nativo listo'
+    # Comprobacion de fondo, no de forma: es lo que de verdad importa.
+    $cwd = & $perlExe -MCwd -e 'print Cwd::getcwd()'
+    if ($cwd -notmatch '^[A-Za-z]:') {
+        throw ("ese perl devuelve el cwd como '$cwd'. Es un Perl MSYS (el de Git), no el nativo: " +
+               "syncqt.pl lo usaria de srcbase con rutas POSIX y los forwarding headers saldrian corruptos")
+    }
+    Say "Perl nativo listo (getcwd = $cwd, con formato Windows)
 }
 
 # --- 2. OpenSSL de desarrollo ----------------------------------------------
