@@ -1,0 +1,128 @@
+# Vigila la rama kde/5.15 y avisa cuando hay un commit que no sea el fijado.
+#
+# No reconstruye nada: solo compara. Reconstruir son ~40 min por arquitectura y
+# necesita un Windows con MSVC v142, Perl nativo, flex/bison y las DLL de ANGLE;
+# eso se lanza a mano con build-qt-win.ps1 (ver README). La razon de separarlo es
+# que un fallo de red de invent.kde.org NO debe poder tumbar el CI de la app: aqui
+# el peor caso es que no se avise, y la app sigue construyendo con lo que tiene.
+name: watch-kde
+
+on:
+  schedule:
+    # Cada lunes 07:17 UTC. Minuto 17 a proposito: los cron de GitHub arrancan
+    # manyotas a la misma hora y los de los minutos 0 se embolatan.
+    - cron: '17 7 * * 1'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compara la rama kde/5.15 con los commits fijados
+        id: diff
+        run: |
+          set -euo pipefail
+
+          BRANCH=$(python3 -c "import json;print(json.load(open('qt-sources.json'))['branch'])")
+          BASE=$(python3   -c "import json;print(json.load(open('qt-sources.json'))['base'])")
+
+          # La lectura es ANONIMA: no hace falta cuenta de KDE ni credencial.
+          # La ruta es group qt, subgroup qt, project qtbase, que es donde esta de
+          # verdad. Los dos caminos erroneos (qt/qtbase y qt/qt) devuelven el
+          # mismo "project not found or you don't have permission", que se lee
+          # justo como un problema de permisos y manda a buscar una cuenta que
+          # no hace falta.
+          api() {
+            curl -fsS --max-time 30 \
+              "https://invent.kde.org/api/v4/projects/qt%2Fqt%2F${1}/repository/commits?ref_name=${BRANCH}&per_page=1" \
+              || echo '[]'
+          }
+
+          echo "rama: $BRANCH   base: $BASE"
+          changed=0
+          for mod in $(python3 -c "import json;print(' '.join(json.load(open('qt-sources.json'))['modules']))"); do
+            fijado=$(python3 -c "import json;print(json.load(open('qt-sources.json'))['modules']['$mod'])")
+            cuerpo=$(api "$mod")
+
+            # Si la API no responde NO se inventa nada: se avisa y se sale. Un
+            # 503 de invent.kde.org (pasa: cae por mantenimiento) no puede
+            # borrarse una referencia por compararla para "arreglar" un problema
+            # que no existe, que es como el BOM antiguo paso a mentir.
+            if [ "$cuerpo" = '[]' ]; then
+              echo "::warning title=API caida::No se pudo leer $mod desde invent.kde.org; comparacion omitida"
+              echo "AVISO_API" >> "$GITHUB_OUTPUT"
+              continue
+            fi
+
+            actual=$(echo "$cuerpo" | python3 -c "import json,sys;d=json.load(sys.stdin);print(d[0]['id'] if d else '')")
+            fecha=$(echo "$cuerpo"  | python3 -c "import json,sys;d=json.load(sys.stdin);print(d[0].get('committed_date','')[:10] if d else '')")
+
+            if [ "$actual" = "$fijado" ]; then
+              printf '  %-15s %s  sin cambios\n' "$mod" "${fijado:0:12}"
+            else
+              printf '  %-15s %s -> %s  NUEVO (%s)\n' "$mod" "${fijado:0:12}" "${actual:0:12}" "$fecha"
+              echo "MODULO_$mod=$actual" >> "$GITHUB_OUTPUT"
+              changed=1
+            fi
+          done
+          echo "changed=$changed" >> "$GITHUB_OUTPUT"
+
+      - name: Abre issue si hay commits nuevos
+        if: steps.diff.outputs.changed == '1'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const src = JSON.parse(fs.readFileSync('qt-sources.json', 'utf8'));
+
+            // El titulo lleva los commits, no solo un "hay cambios": asi el
+            // issue es identificable y se puede cerrar o buscar sin abrirlo.
+            const nuevos = Object.keys(src.modules)
+              .map(m => {
+                const v = process.env[`MODULO_${m}`];
+                return v ? `* \`${m}\`: \`${src.modules[m].slice(0, 12)}\` → \`${v.slice(0, 12)}\`` : null;
+              })
+              .filter(Boolean);
+
+            const titulo = `Qt ${src.branch}: ${nuevos.length} modulo(s) con commit nuevo`;
+            const cuerpo = [
+              `La rama \`${src.branch}\` de ${src.base} ha avanzado sobre lo fijado en \`qt-sources.json\`.`,
+              '',
+              ...nuevos,
+              '',
+              '## Que hacer',
+              '',
+              '1. Revisar si el commit trae algo que nos afecte (el `BOM.json` de',
+              '   los arboles vendorizados solo dejara de cuadrar si cambian las',
+              '   versiones embebidas de SQLite o libpng).',
+              '2. Actualizar `qt-sources.json` con el commit nuevo.',
+              '3. Reconstruir: `pwsh build-qt-win.ps1 -Arch x64` y luego `-Arch x86`.',
+              '   Tarda ~40 min cada una; hacerlas en paralelo si hay sitio.',
+              '4. Revisar el gate de imports de Win7 del x86 (`OK: ninguna DLL del',
+              '   vendor importa simbolos W8+`).',
+              '5. Publicar los arbolos en el repo de la app y actualizar su `BOM.json`.',
+              '',
+              '_Aviso automatico: `.github/workflows/watch-kde.yml`. No se ha',
+              'reconstruido nada; los arboles que usa la app siguen siendo los',
+              'fijados en `qt-sources.json`._',
+            ].join('\n');
+
+            // No abrir un issue si ya hay uno abierto con el mismo titulo: el
+            // cron corre cada semana y sin esto se acumularia uno por semana.
+            const { data: abiertos } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner, repo: context.repo.repo, state: 'open',
+            });
+            if (abiertos.some(i => i.title === titulo)) {
+              core.info('Ya hay un issue abierto con ese titulo; no se duplica.');
+              return;
+            }
+            await github.rest.issues.create({
+              owner: context.repo.owner, repo: context.repo.repo,
+              title: titulo, body: cuerpo,
+            });

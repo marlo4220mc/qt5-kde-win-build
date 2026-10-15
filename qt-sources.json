@@ -1,0 +1,59 @@
+{
+  "_comment": [
+    "Single source of truth for the Qt sources that the vendored trees in",
+    "marlo4220mc/nevertube_qt2 (third_party/qt-win32 and third_party/qt-win64)",
+    "were built from. The BOM.json inside each vendored tree is a COPY of this,",
+    "written by build-qt-win.ps1 at build time.",
+    "",
+    "It lives here and not in the app repo on purpose: the watcher needs to read",
+    "it from a workflow, and GITHUB_TOKEN cannot reach another repository. Making",
+    "this the origin instead of reading the app repo removes the cross-repo",
+    "token problem and the two-file drift that would come with it.",
+    "",
+    "Commits are PINNED, not the branch tip. That is what makes 'Windows and",
+    "Linux ship the same Qt' true by construction instead of true only on the",
+    "day someone compiled. These are the commits the Arch Linux package builds",
+    "qt5-base / qt5-tools / qt5-imageformats / qt5-multimedia from."
+  ],
+
+  "branch": "kde/5.15",
+  "base": "https://invent.kde.org/qt/qt",
+
+  "modules": {
+    "qtbase":         "fbed962c3195ab3952fa54d40e012ad1a4fdc42b",
+    "qttools":        "3e3ab58b40734a1b9bbb7e72b2969d1f752351b1",
+    "qtimageformats": "4076e38d68f05f5e1bcdedb79442d9008f18702c",
+    "qtmultimedia":   "8ddc44103baf166525d6650c842d7f08f651e7bb"
+  },
+
+  "builtFrom": {
+    "qtbase": {
+      "date": "2026-05-20",
+      "note": "QMimeDatabase: handle buggy type definitions with circular inheritance"
+    },
+    "openssl": "3.5.9"
+  },
+
+  "notTheSameAs": {
+    "officialTarball": "5.15.19",
+    "why": [
+      "The KDE branch commit is NEWER than the 5.15.19 release tag. It carries",
+      "upstream commits that landed after that cut as well as the distro",
+      "backports, so calling it '5.15.19 + KDE patches' is imprecise: the",
+      "version string stays 5.15.19 because Qt does not bump it on the branch.",
+      "",
+      "It is measurably different, not a naming quibble: this tree ships SQLite",
+      "3.49.1 and libpng 1.6.47, the official 5.15.19 tarball carries SQLite",
+      "3.46.1 and libpng 1.6.44."
+    ]
+  },
+
+  "vendored": {
+    "app": "marlo4220mc/nevertube_qt2",
+    "paths": {
+      "x86": "third_party/qt-win32",
+      "x64": "third_party/qt-win64"
+    },
+    "bom": "BOM.json inside each tree records this same file's content"
+  }
+}
