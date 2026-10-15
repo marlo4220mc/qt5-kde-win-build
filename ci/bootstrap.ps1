@@ -139,7 +139,7 @@ function Install-Perl([string]$ToolsDir) {
 # de importacion. Se compila desde el fuente oficial con el mismo toolset en vez
 # de bajarse un binario de terceros: es lo unico que no depende de que alguien
 # mantenga un build precompilado, y son unos minutos por arquitectura.
-function Install-OpenSsl([string]$Root, [string]$Ver, [string]$ArchName, [string]$VcScript) {
+function Install-OpenSsl([string]$Root, [string]$Ver, [string]$ArchName, [string]$VcScript, [string]$PerlBin) {
     $app = Join-Path (Join-Path $Root ('openssl\' + $ArchName)) 'app'
     $inc = Join-Path $app 'include'
     $lib = Join-Path $app 'lib'
@@ -189,23 +189,36 @@ function Install-OpenSsl([string]$Root, [string]$Ver, [string]$ArchName, [string
     # produce los mismos nombres pero con simbolos que no casan con la DLL, y el
     # fallo aparece al enlazar o al arrancar, no aqui.
     $bat = Join-Path $Root ('openssl-' + $ArchName + '.bat')
-    @(
-        '@echo off',
-        ('call "' + $VcScript + '" >nul 2>&1'),
-        ('cd /d "' + $work + '"'),
-        ('perl Configure ' + $target + ' shared no-tests no-asm'),
-        'nmake /S > build.log 2>&1',
-        'if errorlevel 1 exit /b 1',
-        ('mkdir "' + $app + '" 2>nul'),
-        ('xcopy /e /i /q include "' + $inc + '" >nul'),
-        ('if not exist "' + $app + '\nss" mkdir "' + $app + '\nss"'),
-        # VC-WIN64A deja los .lib en lib64\, VC-WIN32A en lib\, y las DLL en
-        # bin\. Se copian los que existan.
-        ('if exist lib64 xcopy /e /i /q /s lib64\*.lib "' + $app + '\nss\" >nul'),
-        ('if exist lib   xcopy /e /i /q /s lib\*.lib   "' + $app + '\nss\" >nul'),
-        ('if exist bin   xcopy /e /i /q /s bin\*.dll   "' + $app + '\nss\" >nul'),
+    # Strawberry TIENE que ir primero en el PATH. Sin esto, en un runner con Git
+    # instalado, "perl" es el Perl MSYS de Git: Configure corre con el, genera un
+    # Makefile que no sirve para nmake, y la compilacion se pasa 27 minutos
+    # produciendo cero .lib en vez de fallar al instante. En una maquina sin Git
+    # el mismo fallo es un 9009 inmediato. Comprobado en las dos, por eso se
+    # comprueba en vez de suponer que el PATH ya esta bien.
+    $bat = Join-Path $Root ('openssl-' + $ArchName + '.bat')
+    $lineas = @(
+        '@echo off'
+        ('set "PATH=' + $PerlBin + ';%PATH%"')
+        'where perl >nul 2>&1'
+        'if errorlevel 1 (echo NO HAY PERL EN EL PATH 1>&2 & exit /b 1)'
+        ('call "' + $VcScript + '" >nul 2>&1')
+        ('cd /d "' + $work + '"')
+        ('perl Configure ' + $target + ' shared no-tests no-asm')
+        'if errorlevel 1 exit /b 1'
+        'nmake /S > build.log 2>&1'
+        'if errorlevel 1 exit /b 1'
+        ('mkdir "' + $app + '" 2>nul')
+        ('xcopy /e /i /q include "' + $inc + '" >nul')
+        ('if not exist "' + $app + '\nss" mkdir "' + $app + '\nss"')
+        # VC-WIN64A deja los .lib en lib64\ y VC-WIN32A en lib\; las DLL van en
+        # bin\ con shared. Se copian los que existan.
+        ('if exist lib64 xcopy /e /i /q /s lib64\*.lib "' + $app + '\nss\" >nul')
+        ('if exist lib   xcopy /e /i /q /s lib\*.lib   "' + $app + '\nss\" >nul')
+        ('if exist bin   xcopy /e /i /q /s bin\*.dll   "' + $app + '\nss\" >nul')
         'exit /b 0'
-    ) | Set-Content -Encoding ASCII -Path $bat
+    )
+    $lineas | Set-Content -Encoding ASCII -Path $bat
+
 
     Say ('compilando OpenSSL ' + $Ver + ' (' + $ArchName + '), unos minutos')
     $p = Start-Process cmd.exe -ArgumentList '/c', $bat -Wait -PassThru -WindowStyle Hidden
@@ -256,6 +269,11 @@ if (-not (Test-Path $vswhere)) { throw 'no encuentro vswhere; hace falta Visual 
 $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
 if (-not $vs) { throw 'no encuentro la instalacion de Visual Studio con las herramientas de C++' }
 
+$perlBin = Join-Path $tools 'sp\perl\bin'
+if (-not (Test-Path (Join-Path $perlBin 'perl.exe'))) {
+    throw ('no encuentro perl.exe en ' + $perlBin + '; Install-Perl deberia haberlo dejado ahi')
+}
+
 foreach ($a in $archs) {
     # El x86 es Win7 y necesita el toolset v142 (VS2019) y el SDK 10.0.19041.
     # En un runner con VS2022 hay que pedir explicitamente esa version: con la
@@ -268,7 +286,7 @@ foreach ($a in $archs) {
     } else {
         $vcScript = Join-Path $vs 'VC\Auxiliary\Build\vcvars64.bat'
     }
-    Install-OpenSsl $Root $hashes.openssl.version $a $vcScript
+    Install-OpenSsl $Root $hashes.openssl.version $a $vcScript $perlBin
 }
 
 Say 'bootstrap completado'
