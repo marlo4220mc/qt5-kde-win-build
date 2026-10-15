@@ -1,107 +1,116 @@
-# nevertube_qt_build
+# qt5-kde-win-build
 
-Receta y vigilancia de los árboles de Qt 5.15 que la app vendoriza.
+Compilaciones reproducibles de **Qt 5.15 para Windows** desde la rama de
+mantenimiento de KDE, con procedencia verificada y gate de imports para Win7.
 
-**Este repo NO contiene los binarios.** Los árboles están en
-[`marlo4220mc/nevertube_qt2`](https://github.com/marlo4220mc/nevertube_qt2), en
-`third_party/qt-win32` (x86/Win7) y `third_party/qt-win64`. Aquí vive **cómo se
-construyen** y **cuándo hay que volver a hacerlo**.
+Publica dos árboles listos para usar: **x64** y **x86/Win7**. Los consume
+cualquier aplicación que linkee contra Qt; no hay nada en ellos específico de
+ningún proyecto.
 
-La separación es deliberada: la receta es un job lento y raro que necesita
-Windows con MSVC v142, Perl nativo, flex/bison y las DLL de ANGLE. Eso no
-pertenece al repo de una aplicación cuyo CI tiene que ser rápido y no puede
-dependir de la red.
+## Por qué existe
 
-## Qué consume y qué no la app
+Porque las compilaciones oficiales de Qt para Windows **se quedaron en 5.15.2**:
 
-| | |
-|---|---|
-| La app usa | los árboles vendorizados, en el repo, sin red |
-| Este repo produce | esos árboles, y avisa cuando hay que rehacerlos |
-| Acoplamiento | uno, y explícito: alguien sube el árbol y actualiza el `BOM.json` |
+```
+download.qt.io/online/qtsdkrepository/windows_x86/desktop/
+  -> 5.15.0, 5.15.1, 5.15.2 ... y nada más
+```
 
-El `BOM.json` de dentro de cada árbol es una **copia** de `qt-sources.json`, escrita
-por la receta al construir. No es la fuente: si alguien los edita a mano, los dos
-ficheros dejan de cuadrar y eso hay que verlo.
+Ese repositorio es el que usan `aqtinstall` e `install-qt-action`. Así que
+"instala Qt en el CI" significa, en la práctica, "instala 5.15.2", que va 17
+versiones de parche por detrás y sin las correcciones de seguridad de
+5.15.3 → 5.15.19. Los **fuentes** oficiales sí están completos en
+`download.qt.io/archive`.
+
+Las opciones eran: aceptar 5.15.2, o compilar. Aquí se compila, y se hace desde
+la rama que usa la distribución Linux, para que Windows y Linux lleven el mismo
+Qt.
+
+## Qué produce
+
+Una **release** con:
+
+- `qt-winx64.zip` y `qt-winx86.zip`: prefijos de Qt completos (headers, libs,
+  plugins, `mkspecs`, `bin/`).
+- El `BOM.json` de cada árbol, que registra qué se puso dentro: commit por
+  módulo, SHA-256 del archivo que produce ese commit, toolset, flags de
+  `configure` y versión de OpenSSL.
+
+Consumirlos es copiar el árbol junto al proyecto y apuntar la compilación a él:
+
+```sh
+cmake -B build -DCMAKE_PREFIX_PATH=/ruta/al/arbol
+# o, con qmake, usar su bin/qmake.exe
+```
+
+Nada dentro del árbol depende de este repositorio.
 
 ## `qt-sources.json` es la única fuente de verdad
 
-Commits **fijados**, no la punta de la rama. Es lo que hace que "Windows y Linux
-llevan el mismo Qt" sea cierto por construcción y no solo cierto el día que
+Commits **fijados**, no la punta de la rama. Eso es lo que hace que "Windows y
+Linux llevan el mismo Qt" sea cierto por construcción y no solo cierto el día que
 compilaste alguien. Son los mismos commits con los que Arch construye
 `qt5-base`, `qt5-tools`, `qt5-imageformats` y `qt5-multimedia`.
 
-Vive aquí y no en el repo de la app porque el watcher tiene que leerlo, y
-`GITHUB_TOKEN` no alcanza otro repositorio. Poner el origen aquí quita el problema
-del token y el deriva de dos ficheros.
+Vive aquí y no junto a los árboles publicados porque el watcher tiene que
+leerlo, y `GITHUB_TOKEN` no alcanza otro repositorio. Poner el origen aquí quita
+el problema del token y, sobre todo, el deriva entre dos ficheros.
+
+El `BOM.json` de cada árbol es una **copia** de este fichero, escrita por la
+receta al construir. Si alguien edita uno a mano, los dos dejan de cuadrar y eso
+hay que verlo: por eso `rebuild.yml` **no publica** si el BOM generado no
+coincide commit a commit con `qt-sources.json`.
 
 ### La etiqueta es `5.15.19+kde+r96`
 
-No es "5.15.19 + parches de KDE", que era inexacto. La etiqueta correcta sale de
-una fórmula, la misma que usa el PKGBUILD de Arch:
+No es "5.15.19 + parches de KDE", que sería inexacto. La etiqueta correcta sale
+de una fórmula, la misma que usa el `PKGBUILD` de Arch:
 
 ```bash
 echo "$_basever+kde+r"$(git rev-list --count v$_basever-lts-lgpl..$_commit)
 ```
 
-Con `_basever=5.15.19` y `_commit=fbed962c…` eso da **96**, o sea
-**`5.15.19+kde+r96`**. `+kde+rN` es el esquema de Qt para commits posteriores al
-corte, no una invención de Arch.
+`+kde+rN` es el esquema de Qt para commits posteriores a un corte, no una
+invención de Arch.
 
 Lo que **no** es lo mismo:
 
 - `MODULE_VERSION = 5.15.19` en `qtbase/.qmake.conf` → lo que emite Qt y lo que
-  leen los DLL. Correcto, pero solo dice de dónde viene la rama.
+  leen los DLL. Dice de dónde viene la rama.
 - `5.15.19+kde+r96` → la etiqueta del paquete, que además declara que hay **96
-  commits de la rama por detrás** del corte, no solo parches de distro.
+  commits por detrás** del corte, no solo parches de distro.
 
-Confundir las dos fue como el BOM anterior quedó mal dos veces: una vez
-declarando el tarball oficial, y una vez ("5.15.19 + KDE patches") pareciendo
-mucho más preciso de lo que era.
+Contar esto necesita el `git rev-list` de verdad: filtrar commits por la fecha
+del tag da 97, uno de más, porque hay un commit alcanzable desde el tag con fecha
+anterior. La receta **no puede** calcularlo ella misma (descarga archivos por
+commit en vez de clonar, así que no hay historial), y por eso la etiqueta vive en
+`qt-sources.json`.
 
-El número se puede comprobar, y conviene comprobarlo: este árbol lleva **SQLite
-3.49.1** y **libpng 1.6.47**, el tarball oficial 5.15.19 lleva SQLite 3.46.1 y
-libpng 1.6.44. Al reconstruir, si esos números cambian, es para mirar, no para
-volver a subir sin decir por qué.
-
-Y una comprobación que salió de escribir esto: el `_commit` que fija Arch es
-**exactamente** nuestro commit, y nuestro pin es la **cabeza** de `kde/5.15`
-(nada por delante). El "mismo Qt que en Linux" es cierto y está medido, no
-supuesto.
-
-> La receta **no puede** calcular el `r96` ella misma: descarga archivos por
-> commit en vez de clonar, así que no hay historial contra el que correr
-> `rev-list`. Por eso la etiqueta vive en `qt-sources.json`.
-
-## Reconstruir
+## Reconstruir a mano
 
 ```powershell
-# x64 primero (es la que tarda menos y avisa antes si algo se rompió)
-pwsh build-qt-win.ps1 -Arch x64 -Work C:\qtbuild\work\x64 -Dest C:\qtbuild\out\qt-winx64
-pwsh build-qt-win.ps1 -Arch x86 -Work C:\qtbuild\work\x86 -Dest C:\qtbuild\out\qt-winx86
+./ci/bootstrap.ps1 -Arch x64 -Root C:\qtbuild
+.\build-qt-win.ps1 -Arch x64 -Work C:\qtbuild\work\x64 -Dest C:\qtbuild\out\qt-winx64 `
+  -StrawberryPerl C:\qtbuild\tools\sp -OpenSslRoot C:\qtbuild\openssl `
+  -QtOfficialTarball C:\qtbuild\toolgrab\qtbase-official-5.15.19.tar.xz `
+  -AngleBin .\prebuilt\angle
 ```
 
-`-Work` y `-Dest` son explícitos a propósito. El destino por defecto se calcula
-como `<este repo>/third_party/...`, que **no existe aquí**: si alguien lo deja
-puesto y ejecuta desde un recurso compartido por SMB, `Resolve-Path` produce
-`\\host\...\..\third_party` (el padre del recurso, no el repo) y
-`[IO.File]::WriteAllText` rechaza el `..` de una ruta UNC con un error que no
-dice nada del path real. Es lo que pasó.
+El bootstrap deja el resto listo (Perl nativo, OpenSSL, tarball oficial) y
+verifica cada descarga por SHA-256. Para x86, el toolset v142 y el SDK
+10.0.19041 son obligatorios: Win7 no carga un binario hecho con el toolset
+moderno, que importa `GetSystemTimePreciseAsFileTime` (Win8+).
 
-Requisitos en la máquina, ninguno se instala solo:
-
-| | |
-|---|---|
-| MSVC | v142 (VS2019) para x86; el x86 es Win7 y no compila con toolset moderno |
-| Perl | **Strawberry**, no el de Git. El de Git es MSYS y `Cwd::getcwd()` devuelve `/c/...`; `syncqt.pl` lo usa de `srcbase` y sale corrupto |
-| flex/bison | winflexbison (los baja la receta) |
-| OpenSSL | ficheros de desarrollo 3.5.9 por arquitectura |
-| ANGLE | `libEGL.dll` y `libGLESv2.dll` precompilados (ver abajo) |
+`-Dest` explícito a propósito: el destino por defecto se calcula sobre
+`<este repo>/third_party/...`, que no existe aquí. Si se ejecuta desde un recurso
+compartido por SMB, `Resolve-Path` produce `\\host\...\..\third_party` —el padre
+del recurso, no el repo— y `WriteAllText` rechaza el `..` de una ruta UNC con un
+error que no dice nada del path real.
 
 ## Lo que hay que saber para no perder tres builds
 
-Estas cinco cosas costaron un build entero cada una. Están todas comentadas en
-la receta junto al sitio donde aplican, pero el resumen es:
+Estas cinco cosas costaron un build entero (~40 min) cada una. Están comentadas
+en la receta junto al sitio donde aplican.
 
 **1. `syncqt` solo corre si hay `.git`.** `configure.bat` lo lanza únicamente si
 encuentra ese directorio. Sin él no se generan los forwarding headers y el build
@@ -111,31 +120,27 @@ muere con `C1083` en el primer módulo que los incluye —que fue `QtXml`, luego
 campos `TARGET` de los `.pro`**: escrita a mano se escapaba uno de cada vez.
 
 **2. `syncqt.pl` vive solo en qtbase.** Para cada repo de módulo hay que llamar al
-de qtbase pasándole ese repo como `srcbase`. Sin esto, `qtmultimedia` se queda sin
-`include/QtMultimedia` y revienta en `qvideoframe.h`.
+de qtbase pasándole ese repo como `srcbase`. Sin esto, `qtmultimedia` se queda
+sin `include/QtMultimedia` y revienta en `qvideoframe.h`.
 
-**3. ANGLE no es construible desde el git de Qt.** Ni el git de upstream ni el de
-KDE traen **un solo `.pro`** bajo `src/3rdparty/angle`, y su generador `win32cpp.exe`
-no está en ningún tarball público. En el tarball oficial ANGLE vive en `src/angle/`
-y trae además `include/QtANGLE`, que es lo que `src/platformsupport/eglconvenience`
-espera (`$$QT_MODULE_INCLUDE_BASE/QtANGLE`). La receta superpone ese `include`
-sobre el árbol de KDE y copia las DLL desde `-AngleBin`. ANGLE es código de
-Khronos: ni Qt ni KDE lo parchean.
+**3. ANGLE no es construible desde el git de Qt.** Ni upstream ni KDE traen un
+solo `.pro` bajo `src/3rdparty/angle`, y su generador `win32cpp.exe` no está en
+ningún tarball público. Ver `prebuilt/angle/README.md`, que explica por qué y qué
+se hace en su lugar.
 
 **4. `nmake install` de un repo hermano instala 3 headers donde hay 224.**
-`qtmultimedia.pro` no declara `INSTALLS` y su Makefile no tiene regla `syncqt`, así
-que sin el paso explícito de `Install-ModuleHeaders` el paquete x86 salía **sin
-`<QAudioOutput>`**, que es su motor de audio.
+`qtmultimedia.pro` no declara `INSTALLS` y su Makefile no tiene regla `syncqt`.
+Sin el paso explícito de `Install-ModuleHeaders`, el paquete x86 salía **sin
+`<QAudioOutput>`**.
 
 **5. En `include/<M>/`, el fichero con el nombre del header es la _sombra_, no el
 header.** La sombra dice `#include "../../src/multimedia/audio/qaudio.h"`; el
-header de verdad está en `src/`. Copiar la sombra al prefix hace que la app falle
-al compilar con `C1083` en `qaudio.h(1,10)`. La receta copia el real de `src/` y
-solo las sombras que no apuntan fuera del prefix.
+header de verdad está en `src/`. Copiar la sombra al prefix hace que la aplicación
+falle con `C1083` en `qaudio.h(1,10)`.
 
-Y el detalle que costó dos intentos de CI: las sombras se emparejan **por su
+Y el detalle que costó dos intentos: las sombras se emparejan **por su
 contenido**, no por nombre. Qt las escribe en CamelCase (`qaudiodeviceinfo.h` →
-`QAudioDeviceInfo`), y derivar el nombre del fichero produce `Qaudiodeviceinfo`,
+`QAudioDeviceInfo`); derivar el nombre del fichero produce `Qaudiodeviceinfo`,
 que no existe.
 
 ## La regla que resume todo
@@ -143,33 +148,41 @@ que no existe.
 **Solo se reutiliza lo que se puede demostrar.** Un árbol de fuentes se reutiliza
 únicamente si puede probarse que es ese commit (árbol git limpio en el commit
 registrado, o tarball conservado y re-hasheado). El prefix se reutiliza solo si la
-procedencia registrada dice que se construyó con esas fuentes. Cualquier otra cosa
-se descarta y se vuelve a descargar.
+procedencia registrada dice que se construyó con esas fuentes. Cualquier otra
+cosa se descarta y se vuelve a descargar.
 
-Esto no es purismo. La receta anterior reutilizaba el árbol siempre que el
-directorio existía y **grababa el sha256 esperado en el BOM** sin comprobar nada;
-el BOM declaraba el tarball oficial de Qt mientras los binarios eran de la rama
-KDE. La diferencia se podía medir (SQLite 3.49.1 contra 3.46.1) y nadie la miró
-porque el BOM afirmaba lo contrario.
+No es purismo. La razón original de hacerlo así: la receta reutilizaba el árbol
+siempre que el directorio existía y **grababa el sha256 esperado en el BOM** sin
+comprobar nada. El BOM declaraba el tarball oficial de Qt mientras los binarios
+venían de la rama KDE, y la diferencia se podía medir (SQLite 3.49.1 contra
+3.46.1) pero nadie la miró, porque el BOM afirmaba lo contrario.
 
 ## Automatización
 
-`watch-kde.yml` corre cada lunes y compara la rama `kde/5.15` contra
-`qt-sources.json`. Si hay commit nuevo abre un issue con los SHA y los pasos.
+| workflow | qué hace |
+|---|---|
+| `watch-kde.yml` | Compara la rama con lo fijado, cada lunes. Si hay commit nuevo, abre issue **y lanza la reconstrucción**. |
+| `rebuild.yml` | Compila x64 y x86, verifica el BOM y publica una release. A mano o disparado por el watcher. |
 
-**No reconstruye.** Dos razones, y las dos importan:
+El ciclo es automático **hasta el punto de consumo**: nadie empuja nada a tu
+proyecto sin que alguien lo decida, porque automatizar eso exigiría un token de
+otro repositorio y sería justo el acoplamiento invisible que hizo que el BOM
+antiguo mintiera.
 
-- Reconstruir son ~40 min por arquitectura con un toolchain que un runner no tiene.
-- Si `invent.kde.org` devuelve 503 (pasa, por mantenimiento), el watcher avisa y no
-  toca nada. No puede crear una referencia para "arreglar" un problema que no
-  existe, que es exactamente el modo de fallo del BOM antiguo.
+Cuando `invent.kde.org` devuelve 503 (pasa, por mantenimiento), el watcher avisa
+y no toca nada. No puede crear una referencia para "arreglar" un problema que no
+existe.
 
-Un issue por semana sin cerrar sería ruido, así que no se abre uno si ya hay otro
-abierto con el mismo título.
+Lo que **no** está automatizado, a propósito: el consumo. Y el watcher no
+duplica el issue si ya hay uno abierto con el mismo título, porque si no se
+acumularía uno por semana.
 
-## Lo que no está automatizado
+## Licencia
 
-La reconstrucción. No hay workflow de build aquí a propósito: no se ha podido
-ejecutar uno contra un runner real, y publicar un workflow que dice funcionar sin
-haberlo visto funcionar sería la misma mentira que acabamos de arreglar en el BOM.
-Cuando exista uno validado, que avise el recipe de que ya no hay que hacerlo a mano.
+Qt es **LGPL-3.0** con enlace dinámico: los árboles son de LGPL, cada módulo lo
+declara en su `LICENSE.*`. ANGLE (los dos DLL de `prebuilt/angle/`) es
+**BSD-3-Clause** de Google, con su licencia junto a ellos. Compilar esta receta
+no cambia ninguna de las dos.
+
+Qt es una marca de The Qt Company Ltd. Esta documentación no está afiliada a Qt
+ni a KDE.
