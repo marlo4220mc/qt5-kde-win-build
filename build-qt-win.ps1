@@ -107,6 +107,13 @@ param(
   if (-not $KdeBranch) { $KdeBranch = $sources.branch }
   if (-not $KdeBase)   { $KdeBase   = $sources.base }
 
+  # La etiqueta de version va en qt-sources.json y NO se calcula aqui a proposito:
+  # es 'git rev-list --count v5.15.19-lts-lgpl..<commit>', y esta receta descarga
+  # archivos por commit en vez de clonar, asi que no hay historial contra el que
+  # correrlo. Con 5.15.19+kde+r96 el BOM deja de decir "5.15.19", que es lo que
+  # declara MODULE_VERSION en .qmake.conf y por eso leen los DLL: eso no afirma
+  # que el arbol sea el corte de 5.15.19, y no lo es.
+
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -1150,11 +1157,18 @@ $bom = [ordered]@{
   generated = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
   arch      = $Arch
   qt        = [ordered]@{
-    # A git build is NOT "5.15.19": the 5.15 branch keeps carrying fixes past the
-    # last release, so the version string stays 5.15.19 while the code is newer.
-    # Saying otherwise is how the previous BOM managed to be wrong twice.
-    version   = $(if ($KdeUrl) { "$QtVersion + KDE patches (branch $KdeBranch)" } else { $QtVersion })
-    origin    = $(if ($KdeUrl) { "KDE maintenance branch $KdeBranch (same source as the Linux package); the per-module commit below IS the version, the 5.15.19 string is only the last release cut from this branch" } else { 'official Qt release tarballs (download.qt.io), no git' })
+      # Un build de git NO es "5.15.19". La etiqueta vive en qt-sources.json
+      # porque es 'git rev-list --count v5.15.19-lts-lgpl..<commit>' y esta receta
+      # descarga archivos por commit en vez de clonar, asi que no hay historial
+      # contra el que correrlo. Aqui sale 96, y el PKGBUILD de Arch lo calcula
+      # exactamente igual con esa misma formula.
+      #
+      # 5.15.19 a secas es MODULE_VERSION, lo que declara qtbase/.qmake.conf y por
+      # eso leen los DLL. Afirmar que el arbol ES el corte de 5.15.19 es falso: hay
+      # 96 commits detras. Escribirlo asi fue como el BOM anterior quedo mal dos
+      # veces.
+      version   = $(if ($KdeUrl) { $sources.versionLabel } else { $QtVersion })
+      origin    = $(if ($KdeUrl) { "KDE maintenance branch $KdeBranch, at the commits below (the same ones the Arch Linux package pins). The label is Qt's own +kde+rN scheme: there are $(([int]($sources.versionLabel -replace '.+\+r',''))) commits on this branch after the v5.15.19-lts-lgpl tag, not only distro patches" } else { 'official Qt release tarballs (download.qt.io), no git' })
     modules   = [ordered]@{}
     configure = $configureFlags
     toolset   = "cl $clVersion ($vcArgs)"

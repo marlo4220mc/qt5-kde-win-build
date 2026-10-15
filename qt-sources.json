@@ -15,17 +15,14 @@
     "day someone compiled. These are the commits the Arch Linux package builds",
     "qt5-base / qt5-tools / qt5-imageformats / qt5-multimedia from."
   ],
-
   "branch": "kde/5.15",
   "base": "https://invent.kde.org/qt/qt",
-
   "modules": {
-    "qtbase":         "fbed962c3195ab3952fa54d40e012ad1a4fdc42b",
-    "qttools":        "3e3ab58b40734a1b9bbb7e72b2969d1f752351b1",
+    "qtbase": "fbed962c3195ab3952fa54d40e012ad1a4fdc42b",
+    "qttools": "3e3ab58b40734a1b9bbb7e72b2969d1f752351b1",
     "qtimageformats": "4076e38d68f05f5e1bcdedb79442d9008f18702c",
-    "qtmultimedia":   "8ddc44103baf166525d6650c842d7f08f651e7bb"
+    "qtmultimedia": "8ddc44103baf166525d6650c842d7f08f651e7bb"
   },
-
   "builtFrom": {
     "qtbase": {
       "date": "2026-05-20",
@@ -33,7 +30,21 @@
     },
     "openssl": "3.5.9"
   },
-
+  "versionLabel": "5.15.19+kde+r96",
+  "versionLabelHow": [
+    "5.15.19+kde+r96 is not invented here. It is the label the Arch Linux",
+    "package carries, and Arch computes it with:",
+    "",
+    "    echo \"$_basever+kde+r\"`git rev-list --count v$_basever-lts-lgpl..$_commit`",
+    "",
+    "With _basever=5.15.19 and _commit=fbed962c3195ab3952fa54d40e012ad1a4fdc42b",
+    "that is 96, so the label is 5.15.19+kde+r96. Arch's PKGBUILD pins that same",
+    "commit, and its static pkgver line reads r96 too.",
+    "",
+    "The recipe CANNOT derive this on its own: it fetches per-commit archives",
+    "instead of cloning, so there is no git history to run rev-list against.",
+    "That is why it lives here, next to the commits it describes."
+  ],
   "notTheSameAs": {
     "officialTarball": "5.15.19",
     "why": [
@@ -45,9 +56,14 @@
       "It is measurably different, not a naming quibble: this tree ships SQLite",
       "3.49.1 and libpng 1.6.47, the official 5.15.19 tarball carries SQLite",
       "3.46.1 and libpng 1.6.44."
+    ],
+    "queNoEs": [
+      "'5.15.19 a secas' no describe este arbol: ese es MODULE_VERSION, lo que",
+      "declara qtbase/.qmake.conf y por eso loseen los DLL. La etiqueta del paquete",
+      "es 5.15.19+kde+r96, que declara que hay 96 commits de la rama detras del",
+      "corte 5.15.19, no solo parches."
     ]
   },
-
   "vendored": {
     "app": "marlo4220mc/nevertube_qt2",
     "paths": {
