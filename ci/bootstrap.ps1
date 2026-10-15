@@ -32,6 +32,14 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
+# En PowerShell 7.3+ un comando nativo que escribe en stderr se convierte en error
+# terminante cuando ErrorActionPreference es Stop, incluso devolviendo 0. Aqui el
+# codigo de salida se comprueba a mano, asi que ese comportamiento solo produce
+# fallos falsos; se desactiva. La variable no existe en 5.1.
+if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
+    $PSNativeCommandUseErrorActionPreference = $false
+}
+
 function Say([string]$m) { Write-Host ('==> ' + $m) }
 
 # --- utilidades -------------------------------------------------------------
@@ -150,13 +158,24 @@ function Install-OpenSsl([string]$Root, [string]$Ver, [string]$ArchName, [string
     New-Item -ItemType Directory -Force -Path $src | Out-Null
     Say 'descomprimiendo OpenSSL'
     $tarExe = Join-Path $env:SystemRoot 'System32\tar.exe'
-    & $tarExe -xf $tar -C $src
-    if ($LASTEXITCODE -ne 0) { throw 'tar fallo al descomprimir OpenSSL' }
+    # La salida de tar se captura: si falla, el motivo esta ahi y no hace falta
+    # reproducirlo en una maquina de depuracion.
+    $salida = & $tarExe -xf $tar -C $src 2>&1
+    $rc = $LASTEXITCODE
+    $salida | Select-Object -First 5 | ForEach-Object { if ("$_" -ne '') { Write-Host ('    tar: ' + $_) } }
+    if ($rc -ne 0) {
+        throw ('tar fallo al descomprimir OpenSSL (exit ' + $rc + ')' + [Environment]::NewLine + ($salida | Out-String))
+    }
 
     # El tarball trae un unico directorio raiz con la version dentro.
-    $root = Get-ChildItem $src -Directory | Select-Object -First 1
-    if (-not $root) { throw 'el tarball de OpenSSL no ha dejado ningun directorio' }
-    $work = Join-Path $root.FullName $ArchName
+    $raiz = @(Get-ChildItem $src -Directory -ErrorAction SilentlyContinue)
+    if ($raiz.Count -eq 0) {
+        $todo = @(Get-ChildItem $src -ErrorAction SilentlyContinue | Select-Object -First 8)
+        throw ('tar devolvio ' + $rc + ' pero no dejo ningun directorio en ' + $src +
+               '. Contenido: ' +
+               $(if ($todo.Count -gt 0) { ($todo | ForEach-Object { $_.Name }) -join ', ' } else { '(vacio)' }))
+    }
+    $work = Join-Path $raiz[0].FullName $ArchName
 
     $bat = Join-Path $Root ('openssl-' + $ArchName + '.bat')
     $rel = (Resolve-Path $work).Path
