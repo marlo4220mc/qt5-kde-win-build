@@ -175,22 +175,35 @@ function Install-OpenSsl([string]$Root, [string]$Ver, [string]$ArchName, [string
                '. Contenido: ' +
                $(if ($todo.Count -gt 0) { ($todo | ForEach-Object { $_.Name }) -join ', ' } else { '(vacio)' }))
     }
-    $work = Join-Path $raiz[0].FullName $ArchName
+    # El tarball NO trae subdirectorio por arquitectura: la raiz es
+    # openssl-3.5.9/ y el subdirectorio x64 o x86 lo crea nmake al compilar.
+    # Anadir $ArchName aqui daba una ruta que no existe.
+    $work = $raiz[0].FullName
 
+    # El target de Configure depende de la arquitectura: VC-WIN32A es el de 32
+    # bits y para x64 hace falta VC-WIN64A.
+    $target = if ($ArchName -eq 'x64') { 'VC-WIN64A' } else { 'VC-WIN32A' }
+
+    # shared, NO no-shared. Qt se configura con -openssl-runtime: enlaza contra
+    # los .lib de importacion y carga la DLL en ejecucion. Un build estatico
+    # produce los mismos nombres pero con simbolos que no casan con la DLL, y el
+    # fallo aparece al enlazar o al arrancar, no aqui.
     $bat = Join-Path $Root ('openssl-' + $ArchName + '.bat')
-    $rel = (Resolve-Path $work).Path
     @(
         '@echo off',
         ('call "' + $VcScript + '" >nul 2>&1'),
-        ('cd /d "' + $rel + '"'),
-        'perl Configure VC-WIN32A no-shared no-tests no-asm',
+        ('cd /d "' + $work + '"'),
+        ('perl Configure ' + $target + ' shared no-tests no-asm'),
         'nmake /S > build.log 2>&1',
         'if errorlevel 1 exit /b 1',
         ('mkdir "' + $app + '" 2>nul'),
         ('xcopy /e /i /q include "' + $inc + '" >nul'),
         ('if not exist "' + $app + '\nss" mkdir "' + $app + '\nss"'),
-        ('xcopy /e /i /q /s lib\*.lib "' + $app + '\nss" >nul'),
-        ('xcopy /e /i /q /s lib\*.dll "' + $app + '\nss" >nul'),
+        # VC-WIN64A deja los .lib en lib64\, VC-WIN32A en lib\, y las DLL en
+        # bin\. Se copian los que existan.
+        ('if exist lib64 xcopy /e /i /q /s lib64\*.lib "' + $app + '\nss\" >nul'),
+        ('if exist lib   xcopy /e /i /q /s lib\*.lib   "' + $app + '\nss\" >nul'),
+        ('if exist bin   xcopy /e /i /q /s bin\*.dll   "' + $app + '\nss\" >nul'),
         'exit /b 0'
     ) | Set-Content -Encoding ASCII -Path $bat
 
@@ -207,7 +220,13 @@ function Install-OpenSsl([string]$Root, [string]$Ver, [string]$ArchName, [string
     # Sin esto, el paso siguiente falla con un "no encuentro openssl/include" que
     # no dice que lo que fallo fue el copy y no la compilacion.
     if (-not (Test-Path $inc)) { throw ('OpenSSL (' + $ArchName + ') compilo pero no hay headers en ' + $inc) }
-    Say ('OpenSSL ' + $Ver + ' (' + $ArchName + ') listo en ' + $app)
+    $nlibs = (Get-ChildItem (Join-Path $app 'nss') -Recurse -Filter '*.lib' -File -ErrorAction SilentlyContinue | Measure-Object).Count
+    if ($nlibs -lt 2) {
+        throw ('OpenSSL (' + $ArchName + ') dejo solo ' + $nlibs + ' .lib en ' + (Join-Path $app 'nss') +
+               '. Se necesitan libssl y libcrypto para que Qt enlace; revisa el target de Configure (' +
+               $target + ') y que el build sea shared, no estatico')
+    }
+    Say ('OpenSSL ' + $Ver + ' (' + $ArchName + ') listo en ' + $app + ' (' + $nlibs + ' .lib)')
 }
 
 # --- 3. tarball oficial (solo para include/QtANGLE) ------------------------
