@@ -210,10 +210,17 @@ function Install-OpenSsl([string]$Root, [string]$Ver, [string]$ArchName, [string
         ('mkdir "' + $app + '" 2>nul')
         ('xcopy /e /i /q include "' + $inc + '" >nul')
         ('if not exist "' + $app + '\nss" mkdir "' + $app + '\nss"')
-        # VC-WIN64A deja los .lib en lib64\ y VC-WIN32A en lib\; las DLL van en
-        # bin\ con shared. Se copian los que existan.
+        # Con los targets VC-WIN* las .lib NO van a lib64\ ni a lib\: el
+        # Makefile las deja en la RAIZ del arbol.
+        #     LIBS= apps\libapps.lib libcrypto.lib libssl.lib ...
+        #     INSTALL_LIBS="libcrypto.lib" "libssl.lib"
+        # Por eso el xcopy se quedaba con cero ficheros tras 27 minutos de
+        # compilacion sin que nada fallara. Se copia de la raiz y, ademas, de
+        # lib64\ y lib\ por si otro target lo hiciera distinto. Las DLL van en util\.
+        ('xcopy /e /i /q *.lib "' + $app + '\nss\" >nul')
         ('if exist lib64 xcopy /e /i /q /s lib64\*.lib "' + $app + '\nss\" >nul')
         ('if exist lib   xcopy /e /i /q /s lib\*.lib   "' + $app + '\nss\" >nul')
+        ('if exist util  xcopy /e /i /q /s util\*.dll   "' + $app + '\nss\" >nul')
         ('if exist bin   xcopy /e /i /q /s bin\*.dll   "' + $app + '\nss\" >nul')
         'exit /b 0'
     )
@@ -233,12 +240,21 @@ function Install-OpenSsl([string]$Root, [string]$Ver, [string]$ArchName, [string
     # Sin esto, el paso siguiente falla con un "no encuentro openssl/include" que
     # no dice que lo que fallo fue el copy y no la compilacion.
     if (-not (Test-Path $inc)) { throw ('OpenSSL (' + $ArchName + ') compilo pero no hay headers en ' + $inc) }
-    $nlibs = (Get-ChildItem (Join-Path $app 'nss') -Recurse -Filter '*.lib' -File -ErrorAction SilentlyContinue | Measure-Object).Count
-    if ($nlibs -lt 2) {
-        throw ('OpenSSL (' + $ArchName + ') dejo solo ' + $nlibs + ' .lib en ' + (Join-Path $app 'nss') +
-               '. Se necesitan libssl y libcrypto para que Qt enlace; revisa el target de Configure (' +
-               $target + ') y que el build sea shared, no estatico')
+    # Por NOMBRE, no por cantidad: dos .lib cualesquiera no demuestran que
+    # estén los de OpenSSL, que son los que Qt necesita para enlazar.
+    $nssDir = Join-Path $app 'nss'
+    $faltanLib = @()
+    foreach ($l in @('libssl.lib', 'libcrypto.lib')) {
+        if (-not (Test-Path (Join-Path $nssDir $l))) { $faltanLib += $l }
     }
+    if ($faltanLib.Count -gt 0) {
+        $hay = @(Get-ChildItem $nssDir -Filter '*.lib' -File -ErrorAction SilentlyContinue |
+                 ForEach-Object { $_.Name })
+        throw ('OpenSSL (' + $ArchName + ') no dejo ' + ($faltanLib -join ' ni ') + ' en ' + $nssDir +
+               '. Target de Configure: ' + $target + '. Lo que si hay: ' +
+               $(if ($hay.Count -gt 0) { ($hay | Select-Object -First 8) -join ', ' } else { '(ninguna)' }))
+    }
+    $nlibs = (Get-ChildItem $nssDir -Filter '*.lib' -File -ErrorAction SilentlyContinue | Measure-Object).Count
     Say ('OpenSSL ' + $Ver + ' (' + $ArchName + ') listo en ' + $app + ' (' + $nlibs + ' .lib)')
 }
 
