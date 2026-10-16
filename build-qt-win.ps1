@@ -988,14 +988,17 @@ if ((Test-Path $qmakePath) -and $built.Contains('qtbase')) {
   Invoke-ModuleSyncqt (Join-Path $Work 'qtbase') 'QtCore,QtGui,QtNetwork,QtSql,QtXml,QtWidgets,QtPrintSupport,QtDBus,QtOpenGL,QtPlatformHeaders'
   Invoke-Msvc "configure.bat $configureFlags"
   Say "compilando qtbase (esto es lo que tarda)"
-  # /MP compila en paralelo los cl de un MISMO Makefile. Sin el, esto va con
-  # un solo core aunque la maquina tenga 8: medido, un build de qtbase en un
-  # runner de 4 nucleos tardaba mas de 3 horas sin terminarlo. /MP no paraleliza
-  # ENTRE objetivos, asi que los modulos siguen yendo en serie, pero dentro de
-  # qtbase hay cientos de .obj y ahi es donde esta el tiempo. Es seguro: lo
-  # que /MP no tolera es combinarse con /Gm, que aqui no se usa.
-  Invoke-Msvc 'nmake /MP'
-  Invoke-Msvc 'nmake /MP install'
+  # NMAKE ES DE UN SOLO HILO, y no es una opinion: este nmake (14.44) no
+  # declara /M entre sus opciones, y /MP es de cl.exe, no suya, asi que lo
+  # rechaza con
+  #     NMAKE : fatal error U1065: invalid option 'M'
+  # Medido en un runner de 4 nucleos: qtbase paso de 3 horas sin terminar.
+  # La unica paralelizacion real es CL=/MP, pero no sirve aqui: la paralelismo
+  # de /MP es DENTRO de una sola invocacion de cl, y qmake genera una regla
+  # por .cpp que invoca cl una vez con un unico fuente. Para compilar en
+  # paralelo hace falta un reemplazo de nmake como jom, no una bandera.
+Invoke-Msvc 'nmake'
+  Invoke-Msvc 'nmake install'
   Pop-Location
   $script:prov['qtbase'].built = $true; $built['qtbase'] = $true
   Set-WorkProvenance
@@ -1022,8 +1025,8 @@ if (($cfg.Modules -contains 'qttools') -and -not $built.Contains('qttools')) {
   # qttools sub-project.
   Push-Location (Join-Path $Work 'qttools\src\windeployqt')
   Invoke-Msvc "`"$qmake`" windeployqt.pro"
-  Invoke-Msvc 'nmake /MP'
-  Invoke-Msvc 'nmake /MP install'
+  Invoke-Msvc 'nmake'
+  Invoke-Msvc 'nmake install'
   Pop-Location
   $script:prov['qttools'].built = $true; $built['qttools'] = $true
   Set-WorkProvenance
@@ -1045,8 +1048,8 @@ foreach ($m in @('qtimageformats', 'qtmultimedia')) {
   Say "compilando $m"
   Push-Location (Join-Path $Work $m)
   Invoke-Msvc "`"$qmake`" $m.pro"
-  Invoke-Msvc 'nmake /MP'
-  Invoke-Msvc 'nmake /MP install'
+  Invoke-Msvc 'nmake'
+  Invoke-Msvc 'nmake install'
   Pop-Location
   Install-ModuleHeaders (Join-Path $Work $m) @('QtImageFormats','QtMultimedia','QtMultimediaWidgets')
   $script:prov[$m].built = $true; $built[$m] = $true
