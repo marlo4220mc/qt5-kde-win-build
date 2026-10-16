@@ -1023,9 +1023,11 @@ if ((Test-Path $qmakePath) -and $built.Contains('qtbase')) {
   if ($script:nproc -lt 1) { $script:nproc = 4 }
   $jomExe = Join-Path (Split-Path $StrawberryPerl -Parent) 'jom.exe'
   if (Test-Path $jomExe) {
-    $script:makeCmd = '"' + $jomExe + '" -j ' + $script:nproc
+    # /J y no -j: las opciones de jom llevan barra (/J /S /VERSION). -j tambien
+    # funciona, pero la forma canonica es /J y no conviene depender de un alias.
+    $script:makeCmd = '"' + $jomExe + '" /J ' + $script:nproc
     $env:MAKE = $jomExe
-    Say ('  make: jom -j ' + $script:nproc + ' (' + $script:nproc + ' nucleos, en vez de uno solo)')
+    Say ('  make: jom /J ' + $script:nproc + ' (' + $script:nproc + ' nucleos, en vez de uno solo)')
   } else {
     $script:makeCmd = 'nmake'
     Remove-Item Env:\MAKE -ErrorAction SilentlyContinue

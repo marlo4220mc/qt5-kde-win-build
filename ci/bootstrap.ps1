@@ -149,11 +149,40 @@ function Install-Jom([string]$ToolsDir) {
     $tmp = Join-Path $ToolsDir 'jom-download.exe'
     Get-Verified $h.url $tmp $h.sha256 ('jom ' + $h.version) | Out-Null
     Move-Item $tmp $exe -Force
-    # Comprobacion de forma: que corra y sepa pedir ayuda. Un .exe que no arranca
-    # por una dependencia que falta se descubre a mitad del build, no aqui.
-    $v = & $exe -v 2>&1
-    if ($LASTEXITCODE -ne 0) { throw ('jom no arranca: ' + ($v | Out-String)) }
-    Say ('jom ' + $h.version + ' listo (' + (($v | Select-Object -First 1) -join '') + ')')
+    # Comprobacion de que CONSTRUYE, no de que responde: se le pasa un Makefile
+    # minimo y se mira que produzca el fichero. Un .exe que no arranca por una
+    # dependencia que falta se descubre a mitad del build, que es donde duele.
+    #
+    # /VERSION y no -v porque jom no tiene -v: sus opciones llevan barra (/J, /S,
+    # /VERSION). Con -v responde "unknown command line option" y sale con 128,
+    # que es exactamente el falso fallo que hacia fallar el bootstrap entero.
+    $v = & $exe /VERSION 2>&1
+    if ($LASTEXITCODE -ne 0) { throw ('jom no arranca (/VERSION): ' + ($v | Out-String)) }
+
+    $prueba = Join-Path $ToolsDir 'jom-selftest'
+    Remove-Item $prueba -Recurse -Force -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory -Force -Path $prueba | Out-Null
+    # CR/LF de verdad y un tabulador real (0x09), que es lo que make exige.
+    Set-Content -Encoding ASCII -NoNewline -Path (Join-Path $prueba 'Makefile') `
+        -Value ("all:`r`n" + [char]9 + "echo ok > out.txt`r`n")
+    # El codigo de salida se mira a mano y la preferencia se baja alrededor: con
+    # ErrorActionPreference=Stop, el stderr de un comando nativo se convierte en
+    # error TERMINANTE. pwsh 7.3+ lo hace con PSNativeCommandUseErrorActionPreference
+    # (que ya se desactiva arriba), pero Windows PowerShell 5.1 lo hace igual con
+    # solo 2>&1, y ahi jom escribe parte de su salida. Sin esto, el canario falla
+    # en 5.1 aunque jom este perfectamente bien.
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    Push-Location $prueba
+    & $exe /J 2 2>&1 | Out-Null
+    $rc = $LASTEXITCODE
+    Pop-Location
+    $ErrorActionPreference = $prevEap
+    if (-not (Test-Path (Join-Path $prueba 'out.txt'))) {
+        throw ('jom responde pero NO construye (rc=' + $rc + '). Sin esto, el build entero')
+    }
+    Remove-Item $prueba -Recurse -Force -ErrorAction SilentlyContinue
+    Say ('jom ' + $h.version + ' listo, y construye de verdad')
 }
 
 # --- 2. OpenSSL de desarrollo ----------------------------------------------
