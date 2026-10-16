@@ -173,6 +173,22 @@ Cuando `invent.kde.org` devuelve 503 (pasa, por mantenimiento), el watcher avisa
 y no toca nada. No puede crear una referencia para "arreglar" un problema que no
 existe.
 
+### Lo que cuesta en cuota de Actions
+
+Una reconstrucción completa son **varias horas de runner Windows**, y Windows
+cuenta **×2** frente a Linux. El build usa `nmake /MP` a propósito: sin él va
+con un solo core aunque la máquina tenga 8, y un `qtbase` medido en un runner de
+4 núcleos tardó más de 3 horas sin terminar. `/MP` no paraleliza entre objetivos
+—los módulos siguen yendo en serie— pero dentro de qtbase hay cientos de `.obj`
+y ahí está el tiempo.
+
+`/MP` no paraleliza entre objetivos, así que los artefactos se guardan **7 días**
+y no 30: cada run sube unos 160 MB entre los dos árboles, y el almacenamiento
+tiene cuota **aparte** de los minutos.
+
+Para poner un tope de verdad hay que usar *Settings → Billing and licensing →
+Budgets and alerts*; desde el workflow no se puede leer si se ha superado.
+
 Lo que **no** está automatizado, a propósito: el consumo. Y el watcher no
 duplica el issue si ya hay uno abierto con el mismo título, porque si no se
 acumularía uno por semana.

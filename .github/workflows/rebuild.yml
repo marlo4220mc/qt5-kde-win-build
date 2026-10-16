@@ -175,7 +175,10 @@ jobs:
         with:
           name: qt-win${{ matrix.arch }}
           path: ${{ runner.temp }}\qtbuild\out\qt-win${{ matrix.arch }}
-          retention-days: 30
+          # 7 dias, no 30. Cada run sube ~160 MB entre los dos arboles y la cuota
+          # de almacenamiento es de 2 GB: con 30 dias se llena en cuatro runs y
+          # la cuenta va por separado de los minutos.
+          retention-days: 7
           if-no-files-found: error
 
   publish:

@@ -988,8 +988,14 @@ if ((Test-Path $qmakePath) -and $built.Contains('qtbase')) {
   Invoke-ModuleSyncqt (Join-Path $Work 'qtbase') 'QtCore,QtGui,QtNetwork,QtSql,QtXml,QtWidgets,QtPrintSupport,QtDBus,QtOpenGL,QtPlatformHeaders'
   Invoke-Msvc "configure.bat $configureFlags"
   Say "compilando qtbase (esto es lo que tarda)"
-  Invoke-Msvc 'nmake'
-  Invoke-Msvc 'nmake install'
+  # /MP compila en paralelo los cl de un MISMO Makefile. Sin el, esto va con
+  # un solo core aunque la maquina tenga 8: medido, un build de qtbase en un
+  # runner de 4 nucleos tardaba mas de 3 horas sin terminarlo. /MP no paraleliza
+  # ENTRE objetivos, asi que los modulos siguen yendo en serie, pero dentro de
+  # qtbase hay cientos de .obj y ahi es donde esta el tiempo. Es seguro: lo
+  # que /MP no tolera es combinarse con /Gm, que aqui no se usa.
+  Invoke-Msvc 'nmake /MP'
+  Invoke-Msvc 'nmake /MP install'
   Pop-Location
   $script:prov['qtbase'].built = $true; $built['qtbase'] = $true
   Set-WorkProvenance
@@ -1016,8 +1022,8 @@ if (($cfg.Modules -contains 'qttools') -and -not $built.Contains('qttools')) {
   # qttools sub-project.
   Push-Location (Join-Path $Work 'qttools\src\windeployqt')
   Invoke-Msvc "`"$qmake`" windeployqt.pro"
-  Invoke-Msvc 'nmake'
-  Invoke-Msvc 'nmake install'
+  Invoke-Msvc 'nmake /MP'
+  Invoke-Msvc 'nmake /MP install'
   Pop-Location
   $script:prov['qttools'].built = $true; $built['qttools'] = $true
   Set-WorkProvenance
@@ -1039,8 +1045,8 @@ foreach ($m in @('qtimageformats', 'qtmultimedia')) {
   Say "compilando $m"
   Push-Location (Join-Path $Work $m)
   Invoke-Msvc "`"$qmake`" $m.pro"
-  Invoke-Msvc 'nmake'
-  Invoke-Msvc 'nmake install'
+  Invoke-Msvc 'nmake /MP'
+  Invoke-Msvc 'nmake /MP install'
   Pop-Location
   Install-ModuleHeaders (Join-Path $Work $m) @('QtImageFormats','QtMultimedia','QtMultimediaWidgets')
   $script:prov[$m].built = $true; $built[$m] = $true
