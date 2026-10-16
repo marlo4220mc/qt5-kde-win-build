@@ -35,7 +35,7 @@ jobs:
   build:
     name: ${{ matrix.arch }}
     runs-on: windows-2022
-    timeout-minutes: 180
+    timeout-minutes: 330
     strategy:
       fail-fast: false
       matrix:
@@ -64,6 +64,21 @@ jobs:
           }
           Write-Host "cl $cl listo"
 
+      # ANTES del bootstrap, no despues. actions/cache restaura en este paso y
+      # guarda al terminar el job; como estaba detras, el bootstrap nunca veia el
+      # cache y rehacia 30 minutos de descarga y compilacion de OpenSSL en cada
+      # run, por mas que el cache estuviera lleno.
+      - name: Cache de las herramientas y el OpenSSL
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ runner.temp }}\qtbuild\tools
+            ${{ runner.temp }}\qtbuild\openssl
+            ${{ runner.temp }}\qtbuild\toolgrab
+          key: qt-bootstrap-${{ matrix.arch }}-${{ hashFiles('ci/bootstrap-hashes.json') }}
+          restore-keys: |
+            qt-bootstrap-${{ matrix.arch }}-
+
       - name: Bootstrap (Perl, OpenSSL, tarball oficial)
         shell: pwsh
         run: |
@@ -76,17 +91,6 @@ jobs:
           key: qt-work-${{ matrix.arch }}-${{ hashFiles('qt-sources.json') }}
           restore-keys: |
             qt-work-${{ matrix.arch }}-
-
-      - name: Cache de las herramientas y el OpenSSL
-        uses: actions/cache@v4
-        with:
-          path: |
-            ${{ runner.temp }}\qtbuild\tools
-            ${{ runner.temp }}\qtbuild\openssl
-            ${{ runner.temp }}\qtbuild\toolgrab
-          key: qt-bootstrap-${{ matrix.arch }}-${{ hashFiles('ci/bootstrap-hashes.json') }}
-          restore-keys: |
-            qt-bootstrap-${{ matrix.arch }}-
 
       - name: Construir
         shell: pwsh
