@@ -86,6 +86,13 @@ param(
   # toman de aqui. ANGLE es codigo de Khronos: ni Qt ni KDE lo parchean.
   [string]$AngleBin = 'C:\qtbuild\angle-prebuilt',
   [string]$QtOfficialTarball = 'C:\qtbuild\toolgrab\qtbase-official.tar.xz',
+  # Donde esta qt-sources.json. Por defecto, al lado de este script. Se puede
+  # apuntar a otro sitio porque si no, ejecutar la receta desde una copia (por
+  # ejemplo en un recurso compartido) falla al final con
+  #     The property 'versionLabel' cannot be found on this object
+  # DESPUES de haber compilado todo, que es la peor parte: el error no dice
+  # que falta el fichero de entrada.
+  [string]$SourcesFile,
   # Destination tree (default depends on -Arch).
   [string]$Dest,
   [string]$Work,
@@ -97,15 +104,29 @@ param(
   # unica fuente de verdad y la que lee tambien el watcher. Tenerlos en dos
   # sitios es justo el modo de fallo del BOM antiguo: dos ficheros que dicen
   # cosas distintas y nadie se entera hasta que algo revienta.
-  $sourcesFile = Join-Path $PSScriptRoot 'qt-sources.json'
-  if (-not (Test-Path $sourcesFile)) { throw "no encuentro $sourcesFile" }
-  $sources = Get-Content $sourcesFile -Raw | ConvertFrom-Json
+  if (-not $SourcesFile) { $SourcesFile = Join-Path $PSScriptRoot 'qt-sources.json' }
+  if (-not (Test-Path $SourcesFile)) {
+    throw ("no encuentro qt-sources.json en " + $SourcesFile +
+           ". Es OBLIGATORIO: de ahi salen los commits y la etiqueta. Pasa -SourcesFile si el script esta en otro sitio")
+  }
+  $pin = Get-Content $SourcesFile -Raw | ConvertFrom-Json
+  # Canario INMEDIATO: si el JSON no trae esto, es que se leyo otro fichero o
+  # que esta desactualizado. Sin el, el fallo salia DESPUES de compilar los
+  # 2053 objetos, al escribir el BOM, y decia que faltaba una propiedad en
+  # un objeto que no era el que yo creia: $sources es tambien el diccionario
+  # de procedencia que el script usa mas abajo, y tapaba a este.
+  if (-not ($pin.PSObject.Properties.Name -contains 'versionLabel')) {
+    throw ('qt-sources.json no tiene versionLabel. Claves leidas: ' + ($pin.PSObject.Properties.Name -join ', '))
+  }
+  if (-not $pin.modules -or $pin.modules.PSObject.Properties.Count -eq 0) {
+    throw 'qt-sources.json no declara ningun modulo'
+  }
   if (-not $KdeCommit -or $KdeCommit.Count -eq 0) {
     $KdeCommit = @{}
-    foreach ($p in $sources.modules.PSObject.Properties) { $KdeCommit[$p.Name] = $p.Value }
+    foreach ($p in $pin.modules.PSObject.Properties) { $KdeCommit[$p.Name] = $p.Value }
   }
-  if (-not $KdeBranch) { $KdeBranch = $sources.branch }
-  if (-not $KdeBase)   { $KdeBase   = $sources.base }
+  if (-not $KdeBranch) { $KdeBranch = $pin.branch }
+  if (-not $KdeBase)   { $KdeBase   = $pin.base }
 
   # La etiqueta de version va en qt-sources.json y NO se calcula aqui a proposito:
   # es 'git rev-list --count v5.15.19-lts-lgpl..<commit>', y esta receta descarga
@@ -1201,8 +1222,8 @@ $bom = [ordered]@{
       # eso leen los DLL. Afirmar que el arbol ES el corte de 5.15.19 es falso: hay
       # 96 commits detras. Escribirlo asi fue como el BOM anterior quedo mal dos
       # veces.
-      version   = $(if ($KdeUrl) { $sources.versionLabel } else { $QtVersion })
-      origin    = $(if ($KdeUrl) { "KDE maintenance branch $KdeBranch, at the commits below (the same ones the Arch Linux package pins). The label is Qt's own +kde+rN scheme: there are $(([int]($sources.versionLabel -replace '.+\+r',''))) commits on this branch after the v5.15.19-lts-lgpl tag, not only distro patches" } else { 'official Qt release tarballs (download.qt.io), no git' })
+      version   = $(if ($KdeUrl) { $pin.versionLabel } else { $QtVersion })
+      origin    = $(if ($KdeUrl) { "KDE maintenance branch $KdeBranch, at the commits below (the same ones the Arch Linux package pins). The label is Qt's own +kde+rN scheme: there are $(([int]($pin.versionLabel -replace '.+\+r',''))) commits on this branch after the v5.15.19-lts-lgpl tag, not only distro patches" } else { 'official Qt release tarballs (download.qt.io), no git' })
     modules   = [ordered]@{}
     configure = $configureFlags
     toolset   = "cl $clVersion ($vcArgs)"
