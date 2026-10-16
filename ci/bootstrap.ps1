@@ -260,9 +260,13 @@ function Install-OpenSsl([string]$Root, [string]$Ver, [string]$ArchName, [string
         'if errorlevel 1 exit /b 1'
         'nmake /S > build.log 2>&1'
         'if errorlevel 1 exit /b 1'
+        # app\lib y NO app\nss: la RECETA apunta a app\lib. Durante un tiempo
+        # estos xcopy escribieron en nss y el canario de abajo miraba nss, asi que
+        # ambos scripts eran coherentes consigo mismos y no con el otro: en CI Qt
+        # se configuro con LIB=vacio y produjo un Qt5Network sin TLS sin fallar.
         ('mkdir "' + $app + '" 2>nul')
         ('xcopy /e /i /q include "' + $inc + '" >nul')
-        ('if not exist "' + $app + '\nss" mkdir "' + $app + '\nss"')
+        ('if not exist "' + $app + '\lib" mkdir "' + $app + '\lib"')
         # Con los targets VC-WIN* las .lib NO van a lib64\ ni a lib\: el
         # Makefile las deja en la RAIZ del arbol.
         #     LIBS= apps\libapps.lib libcrypto.lib libssl.lib ...
@@ -270,11 +274,11 @@ function Install-OpenSsl([string]$Root, [string]$Ver, [string]$ArchName, [string
         # Por eso el xcopy se quedaba con cero ficheros tras 27 minutos de
         # compilacion sin que nada fallara. Se copia de la raiz y, ademas, de
         # lib64\ y lib\ por si otro target lo hiciera distinto. Las DLL van en util\.
-        ('xcopy /e /i /q *.lib "' + $app + '\nss\" >nul')
-        ('if exist lib64 xcopy /e /i /q /s lib64\*.lib "' + $app + '\nss\" >nul')
-        ('if exist lib   xcopy /e /i /q /s lib\*.lib   "' + $app + '\nss\" >nul')
-        ('if exist util  xcopy /e /i /q /s util\*.dll   "' + $app + '\nss\" >nul')
-        ('if exist bin   xcopy /e /i /q /s bin\*.dll   "' + $app + '\nss\" >nul')
+        ('xcopy /e /i /q *.lib "' + $app + '\lib\" >nul')
+        ('if exist lib64 xcopy /e /i /q /s lib64\*.lib "' + $app + '\lib\" >nul')
+        ('if exist lib   xcopy /e /i /q /s lib\*.lib   "' + $app + '\lib\" >nul')
+        ('if exist util  xcopy /e /i /q /s util\*.dll   "' + $app + '\lib\" >nul')
+        ('if exist bin   xcopy /e /i /q /s bin\*.dll   "' + $app + '\lib\" >nul')
         'exit /b 0'
     )
     $lineas | Set-Content -Encoding ASCII -Path $bat
@@ -295,19 +299,19 @@ function Install-OpenSsl([string]$Root, [string]$Ver, [string]$ArchName, [string
     if (-not (Test-Path $inc)) { throw ('OpenSSL (' + $ArchName + ') compilo pero no hay headers en ' + $inc) }
     # Por NOMBRE, no por cantidad: dos .lib cualesquiera no demuestran que
     # estén los de OpenSSL, que son los que Qt necesita para enlazar.
-    $nssDir = Join-Path $app 'nss'
+    $libDir = Join-Path $app 'lib'
     $faltanLib = @()
     foreach ($l in @('libssl.lib', 'libcrypto.lib')) {
-        if (-not (Test-Path (Join-Path $nssDir $l))) { $faltanLib += $l }
+        if (-not (Test-Path (Join-Path $libDir $l))) { $faltanLib += $l }
     }
     if ($faltanLib.Count -gt 0) {
-        $hay = @(Get-ChildItem $nssDir -Filter '*.lib' -File -ErrorAction SilentlyContinue |
+        $hay = @(Get-ChildItem $libDir -Filter '*.lib' -File -ErrorAction SilentlyContinue |
                  ForEach-Object { $_.Name })
-        throw ('OpenSSL (' + $ArchName + ') no dejo ' + ($faltanLib -join ' ni ') + ' en ' + $nssDir +
+        throw ('OpenSSL (' + $ArchName + ') no dejo ' + ($faltanLib -join ' ni ') + ' en ' + $libDir +
                '. Target de Configure: ' + $target + '. Lo que si hay: ' +
                $(if ($hay.Count -gt 0) { ($hay | Select-Object -First 8) -join ', ' } else { '(ninguna)' }))
     }
-    $nlibs = (Get-ChildItem $nssDir -Filter '*.lib' -File -ErrorAction SilentlyContinue | Measure-Object).Count
+    $nlibs = (Get-ChildItem $libDir -Filter '*.lib' -File -ErrorAction SilentlyContinue | Measure-Object).Count
     Say ('OpenSSL ' + $Ver + ' (' + $ArchName + ') listo en ' + $app + ' (' + $nlibs + ' .lib)')
 }
 

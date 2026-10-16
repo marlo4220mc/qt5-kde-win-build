@@ -311,8 +311,34 @@ function Invoke-Native([string]$Exe, [string[]]$NativeArgs) {
 $script:sslDir  = Join-Path $OpenSslRoot $Arch
 $script:sslInc  = Join-Path $script:sslDir 'app\include'
 $script:sslLib  = Join-Path $script:sslDir 'app\lib'
-$sslInc  = Join-Path $sslDir 'app\include'
-$sslLib  = Join-Path $sslDir 'app\lib'
+# Alias, NO una segunda definicion: antes estas dos rutas se reconstruian con
+# Join-Path y SIN el prefijo $script:, de modo que el canario de abajo miraba una
+# variable y el resto de la receta otra. Apuntaban al mismo sitio por suerte, pero
+# es la misma trampa que $sources: un nombre definido dos veces.
+$sslInc = $script:sslInc
+$sslLib = $script:sslLib
+# CANARIO (no borrar): la receta lee las .lib de app\lib, y el bootstrap las
+# escribia en app\nss. Los dos scripts eran coherentes consigo mismos y no entre si,
+# y ninguno lo comprobaba: en CI Qt se configuro con LIB apuntando a un directorio
+# VACIO y el build paso, produciendo un Qt5Network sin TLS y sin un solo error. Se
+# comprueba aqui, al principio del build, no al final.
+if (Test-Path $script:sslInc) {
+  $faltanSsl = @()
+  foreach ($l in @('libssl.lib', 'libcrypto.lib')) {
+    if (-not (Test-Path (Join-Path $script:sslLib $l))) { $faltanSsl += $l }
+  }
+  if ($faltanSsl.Count -gt 0) {
+    $loQueHay = @(Get-ChildItem $script:sslLib -File -ErrorAction SilentlyContinue |
+                  ForEach-Object { $_.Name } | Select-Object -First 8)
+    $queHay = if ($loQueHay.Count -gt 0) { $loQueHay -join ', ' }
+              elseif (Test-Path $script:sslLib) { '(NADA: el directorio esta vacio)' }
+              else { '(NO EXISTE: ni siquiera esta el directorio)' }
+    throw ('OpenSSL: faltan ' + ($faltanSsl -join ' y ') + ' en ' + $script:sslLib + '. Hay: ' + $queHay +
+           '. Qt se configuraria con -openssl-runtime sin nada que enlazar, y el resultado seria' +
+           ' un Qt5Network sin TLS que no da ningun error al compilar.')
+  }
+  Say ('  OpenSSL: ' + (Get-ChildItem $script:sslLib -Filter '*.lib' | Measure-Object).Count + ' .lib en ' + $script:sslLib)
+}
 $sslFile = if ($Arch -eq 'x64') { 'Win64OpenSSL-1_1_1w.exe' } else { 'Win32OpenSSL-1_1_1w.exe' }
 if (-not (Test-Path (Join-Path $sslInc 'openssl\ssl.h'))) {
   Say "OpenSSL dev no esta en $sslDir; descargando $sslFile"
