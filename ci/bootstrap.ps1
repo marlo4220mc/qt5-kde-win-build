@@ -132,6 +132,30 @@ function Install-Perl([string]$ToolsDir) {
     Say ('Perl nativo listo (getcwd = ' + $cwd + ', con formato Windows)')
 }
 
+# --- 1b. jom, el nmake que si paraleliza -----------------------------------
+
+# NMAKE es de un solo hilo y no tiene bandera paraarlo: nmake 14.44 no declara
+# /M entre sus opciones, y /MP es de cl.exe (que ademas solo paraleliza DENTRO de
+# una invocacion, y qmake invoca cl una vez por .cpp). Medido en un runner de 4
+# nucleos: qtbase paso de tres horas sin terminar.
+#
+# jom es un reemplazo de nmake que entiende -j, y es lo que configure.bat ya
+# busca por la variable MAKE, asi que no hay que tocar el sistema de construccion.
+function Install-Jom([string]$ToolsDir) {
+    $exe = Join-Path $ToolsDir 'jom.exe'
+    if (Test-Path $exe) { Say 'jom ya presente'; return }
+    $h = (Get-Content (Join-Path $PSScriptRoot 'bootstrap-hashes.json') -Raw | ConvertFrom-Json).jom
+    if (-not $h) { throw 'jom no esta fijado en bootstrap-hashes.json' }
+    $tmp = Join-Path $ToolsDir 'jom-download.exe'
+    Get-Verified $h.url $tmp $h.sha256 ('jom ' + $h.version) | Out-Null
+    Move-Item $tmp $exe -Force
+    # Comprobacion de forma: que corra y sepa pedir ayuda. Un .exe que no arranca
+    # por una dependencia que falta se descubre a mitad del build, no aqui.
+    $v = & $exe -v 2>&1
+    if ($LASTEXITCODE -ne 0) { throw ('jom no arranca: ' + ($v | Out-String)) }
+    Say ('jom ' + $h.version + ' listo (' + (($v | Select-Object -First 1) -join '') + ')')
+}
+
 # --- 2. OpenSSL de desarrollo ----------------------------------------------
 
 # Qt se configura con -openssl-runtime: en ejecucion carga las DLL que trae la
@@ -277,6 +301,7 @@ $archs = if ($Arch -eq 'both') { @('x64', 'x86') } else { @($Arch) }
 Say ('bootstrap en ' + $Root + ' (arquitecturas: ' + ($archs -join ', ') + ')')
 
 Install-Perl $tools
+Install-Jom $tools
 Install-QtOfficialTarball $Root $hashes.qtOfficialVersion $hashes.qtOfficialTarballSha256
 
 # OpenSSL necesita el toolset, que en un runner hay que inicializar antes.

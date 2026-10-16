@@ -9,10 +9,8 @@
     "release asset), el de OpenSSL de openssl.org, y el del tarball de Qt se",
     "verifico al bajarlo."
   ],
-
   "qtOfficialVersion": "5.15.19",
   "qtOfficialTarballSha256": "51e91c73abacab81e64efd01bf95794e79c0e605ad80947a024769f0dd620a32",
-
   "openssl": {
     "version": "3.5.9",
     "url": "https://github.com/openssl/openssl/releases/download/openssl-3.5.9/openssl-3.5.9.tar.gz",
@@ -27,7 +25,6 @@
       ".lib de importacion."
     ]
   },
-
   "strawberryPerl": {
     "version": "5.40.5.1",
     "releaseTag": "SP_54051_64bit",
@@ -44,10 +41,28 @@
       "una toolchain para generar codigo x86."
     ]
   },
-
   "angle": {
     "_comment": "vendorizados en prebuilt/angle/, no se descargan. Ver su README.",
     "libEGL.dll": "e0dbd583537658891ce62098ecae7ceee81c61f5ce795168fb5e60d0a0759829",
     "libGLESv2.dll": "b197f8cdf85fe02c22154ff5ee0cc1d9b5f65f57b5834f726a9e2704d78d6962"
+  },
+  "jom": {
+    "version": "1.1.7",
+    "releaseTag": "1.1.7",
+    "url": "https://github.com/crueter-ci/jom/releases/download/1.1.7/jom-amd64.exe",
+    "sha256": "68c78f966956d6b6c86955bb70dd98aec929ebd8b66d3fddb492455bc13f2761",
+    "_source": "digest del asset en la API de GitHub",
+    "_why": [
+      "NMAKE ES DE UN SOLO HILO y no tiene bandera para cambiarlo: nmake 14.44",
+      "declara /A /B /C /D /E /G /I /K /N /P /Q /R /S /T /U /Y /W y ninguna es /M.",
+      "/MP pertenece a cl.exe y NMAKE la rechaza con U1065. CL=/MP tampoco sirve:",
+      "su paralelismo es DENTRO de una invocacion de cl, y qmake genera una regla",
+      "por .cpp que invoca cl una vez con un solo fuente.",
+      "",
+      "jom es un reemplazo de nmake que acepta -j, y configure.bat ya lo detecta",
+      "por la variable MAKE, asi que no hay que tocar el sistema de construccion.",
+      "El binario es amd64 porque es la herramienta del HOST que conduce la",
+      "compilacion; con el se construye tambien el target x86 sin ningun cambio."
+    ]
   }
 }

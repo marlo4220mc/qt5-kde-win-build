@@ -175,16 +175,24 @@ existe.
 
 ### Lo que cuesta en cuota de Actions
 
-Una reconstrucción completa son **varias horas de runner Windows**, y Windows
-cuenta **×2** frente a Linux. El build usa `nmake /MP` a propósito: sin él va
-con un solo core aunque la máquina tenga 8, y un `qtbase` medido en un runner de
-4 núcleos tardó más de 3 horas sin terminar. `/MP` no paraleliza entre objetivos
-—los módulos siguen yendo en serie— pero dentro de qtbase hay cientos de `.obj`
-y ahí está el tiempo.
+Una reconstrucción son **varias horas de runner Windows**, y Windows cuenta
+**×2** frente a Linux. Eso obliga a compilar en paralelo, y aquí hay un dato que
+no es obvio:
 
-`/MP` no paraleliza entre objetivos, así que los artefactos se guardan **7 días**
-y no 30: cada run sube unos 160 MB entre los dos árboles, y el almacenamiento
-tiene cuota **aparte** de los minutos.
+**NMAKE es de un solo hilo y no tiene bandera paraarlo.** Medido, no supuesto:
+`nmake` 14.44 declara `/A /B /C /D /E /G /I /K /N /P /Q /R /S /T /U /Y /W` y
+**ninguna es `/M`**. `/MP` pertenece a `cl.exe` y NMAKE la rechaza con
+`U1065: invalid option 'M'`. Y `CL=/MP` tampoco serviría: su paralelismo es
+*dentro* de una invocación de cl, y qmake genera una regla por `.cpp` que invoca
+cl una vez con un único fuente. Con nmake a secas, un `qtbase` pasó de **tres
+horas sin terminar** en un runner de 4 núcleos.
+
+Por eso el build usa **jom**, un reemplazo de nmake que entiende `-j`, que
+`configure.bat` ya detecta por la variable `MAKE`. Con él el mismo trabajo cabe
+varias veces más corto.
+
+Los artefactos se guardan **7 días** y no 30: cada run sube unos 160 MB entre los
+dos árboles, y el almacenamiento tiene cuota **aparte** de los minutos.
 
 Para poner un tope de verdad hay que usar *Settings → Billing and licensing →
 Budgets and alerts*; desde el workflow no se puede leer si se ha superado.

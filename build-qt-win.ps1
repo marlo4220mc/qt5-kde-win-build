@@ -171,7 +171,9 @@ $configureFlags = @(
   '-opengl', 'dynamic',               # keeps ANGLE (libEGL/libGLESv2)
   '-no-icu',                          # the app needs no ICU (JSON/regex/i18n are fine); ~15 MB less
   '-openssl-runtime',                 # load OpenSSL at runtime (1.1.x or 3.x names)
-  '-mp',                              # nmake with /MP
+  # SIN -mp. En MSVC -mp es /GL (optimizacion de programa completo), NO es
+  # paralelismo: el flag de Qt para eso es /MP de cl.exe, y aqui no aplica. Lo
+  # que hace es cargarle el LTCG al enlace, que es lento.
   '-no-syncqt',                       # we run syncqt.pl ourselves, with a NATIVE perl
   '-nomake', 'examples',
   '-nomake', 'tests'
@@ -986,6 +988,29 @@ if ((Test-Path $qmakePath) -and $built.Contains('qtbase')) {
   # no existe ("No such module: QtTestlib"), asi que la lista tiene que ser
   # exactamente la de los .pro.
   Invoke-ModuleSyncqt (Join-Path $Work 'qtbase') 'QtCore,QtGui,QtNetwork,QtSql,QtXml,QtWidgets,QtPrintSupport,QtDBus,QtOpenGL,QtPlatformHeaders'
+  # --- make -----------------------------------------------------------------
+  # NMAKE es de un solo hilo y no tiene bandera paraarlo (nmake 14.44 no declara
+  # /M; /MP es de cl.exe y ademas solo paraleliza DENTRO de una invocacion, y
+  # qmake invoca cl una vez por .cpp). Medido: qtbase paso de 3 horas sin
+  # terminar en un runner de 4 nucleos.
+  #
+  # jom es un reemplazo de nmake con -j. Si esta, se usa para TODO, y la variable
+  # MAKE se pone para que lo coja tambien configure.bat al generar los Makefiles:
+  # si solo se usara al compilar, configure generaria Makefiles que luego.run
+  # nmake, y habria dos herramientas en el mismo build.
+  $script:nproc = [int]$env:NUMBER_OF_PROCESSORS
+  if ($script:nproc -lt 1) { $script:nproc = 4 }
+  $jomExe = Join-Path (Split-Path $StrawberryPerl -Parent) 'jom.exe'
+  if (Test-Path $jomExe) {
+    $script:makeCmd = '"' + $jomExe + '" -j ' + $script:nproc
+    $env:MAKE = $jomExe
+    Say ('  make: jom -j ' + $script:nproc + ' (' + $script:nproc + ' nucleos, en vez de uno solo)')
+  } else {
+    $script:makeCmd = 'nmake'
+    Remove-Item Env:\MAKE -ErrorAction SilentlyContinue
+    Say '  make: nmake SIN paralelismo (no encuentro jom; el build tardara mucho mas)'
+  }
+
   Invoke-Msvc "configure.bat $configureFlags"
   Say "compilando qtbase (esto es lo que tarda)"
   # NMAKE ES DE UN SOLO HILO, y no es una opinion: este nmake (14.44) no
@@ -997,7 +1022,7 @@ if ((Test-Path $qmakePath) -and $built.Contains('qtbase')) {
   # de /MP es DENTRO de una sola invocacion de cl, y qmake genera una regla
   # por .cpp que invoca cl una vez con un unico fuente. Para compilar en
   # paralelo hace falta un reemplazo de nmake como jom, no una bandera.
-Invoke-Msvc 'nmake'
+Invoke-Msvc $script:makeCmd
   Invoke-Msvc 'nmake install'
   Pop-Location
   $script:prov['qtbase'].built = $true; $built['qtbase'] = $true
@@ -1025,7 +1050,7 @@ if (($cfg.Modules -contains 'qttools') -and -not $built.Contains('qttools')) {
   # qttools sub-project.
   Push-Location (Join-Path $Work 'qttools\src\windeployqt')
   Invoke-Msvc "`"$qmake`" windeployqt.pro"
-  Invoke-Msvc 'nmake'
+  Invoke-Msvc $script:makeCmd
   Invoke-Msvc 'nmake install'
   Pop-Location
   $script:prov['qttools'].built = $true; $built['qttools'] = $true
@@ -1048,7 +1073,7 @@ foreach ($m in @('qtimageformats', 'qtmultimedia')) {
   Say "compilando $m"
   Push-Location (Join-Path $Work $m)
   Invoke-Msvc "`"$qmake`" $m.pro"
-  Invoke-Msvc 'nmake'
+  Invoke-Msvc $script:makeCmd
   Invoke-Msvc 'nmake install'
   Pop-Location
   Install-ModuleHeaders (Join-Path $Work $m) @('QtImageFormats','QtMultimedia','QtMultimediaWidgets')
