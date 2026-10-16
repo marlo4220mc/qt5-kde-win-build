@@ -1106,6 +1106,13 @@ foreach ($m in @('qtimageformats', 'qtmultimedia')) {
 
 # ANGLE se copia UNA vez, fuera del bucle de DLLs del prefix. Puesto dentro se
 # repetia por cada DLL (8 veces) que es ruido, no un fallo.
+# bin/ se crea aqui porque este bloque corre ANTES del ensamblado, que es
+# quien crea los subdirectorios. Con un -Dest que ya existia de un run
+# anterior no se notaba; con un destino nuevo (la primera vez, o una prueba)
+# Copy-Item fallaba con
+#     Could not find a part of the path '...\out\vmfull\bin'
+# DESPUES de haber compilado e instalado los tres modulos enteros.
+New-Item -ItemType Directory -Force -Path (Join-Path $Dest 'bin') | Out-Null
 foreach ($an in @('libEGL.dll','libGLESv2.dll')) {
   $a = Join-Path $AngleBin $an
   if (Test-Path $a) {
