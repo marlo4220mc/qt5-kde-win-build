@@ -7,6 +7,14 @@ Publica dos árboles listos para usar: **x64** y **x86/Win7**. Los consume
 cualquier aplicación que linkee contra Qt; no hay nada en ellos específico de
 ningún proyecto.
 
+> **Dos caminos, el mismo resultado.** Quien solo quiera usar Qt en Windows
+> puede **compilarlo** con la receta de aquí y quedarse con el árbol, o
+> **descargar** un árbol ya publicado por quien lo construyó antes. Los dos
+> caminos dan lo mismo: las mismas fuentes fijadas por commit, los mismos
+> SHA-256, el mismo `BOM.json`. Aquí no se versionan binarios; lo que se versiona
+> es **la receta y la procedencia**, que es lo que hace que un árbol sea
+> verificable en vez de un fichero gigante de confianza.
+
 ## Por qué existe
 
 Porque las compilaciones oficiales de Qt para Windows **se quedaron en 5.15.2**:
@@ -88,17 +96,19 @@ commit en vez de clonar, así que no hay historial), y por eso la etiqueta vive 
 
 ## Reconstruir a mano
 
+Dos pasos, en este orden. El primero deja el árbol de herramientas listo y
+verifica cada descarga por SHA-256; el segundo compila.
+
 ```powershell
-./ci/bootstrap.ps1 -Arch x64 -Root C:\qtbuild
-.\build-qt-win.ps1 -Arch x64 -Work C:\qtbuild\work\x64 -Dest C:\qtbuild\out\qt-winx64 `
-  -StrawberryPerl C:\qtbuild\tools\sp -OpenSslRoot C:\qtbuild\openssl `
-  -QtOfficialTarball C:\qtbuild\toolgrab\qtbase-official-5.15.19.tar.xz `
-  -AngleBin .\prebuilt\angle
+# 1. provisión: Perl nativo, OpenSSL, ANGLE — todo verificado por hash
+./ci/bootstrap.ps1 -Arch x64
+
+# 2. compilación (los defaults de la receta ya apuntan al árbol del paso 1)
+.\build-qt-win.ps1 -Arch x64 -Dest C:\qtbuild\out\qt-winx64
 ```
 
-El bootstrap deja el resto listo (Perl nativo, OpenSSL, tarball oficial) y
-verifica cada descarga por SHA-256. Para x86, el toolset v142 y el SDK
-10.0.19041 son obligatorios: Win7 no carga un binario hecho con el toolset
+`-Arch x86` produce el árbol de Win7. Ahí el toolset **v142** y el SDK
+**10.0.19041** son obligatorios: Win7 no carga un binario hecho con el toolset
 moderno, que importa `GetSystemTimePreciseAsFileTime` (Win8+).
 
 `-Dest` explícito a propósito: el destino por defecto se calcula sobre
@@ -107,10 +117,20 @@ compartido por SMB, `Resolve-Path` produce `\\host\...\..\third_party` —el pad
 del recurso, no el repo— y `WriteAllText` rechaza el `..` de una ruta UNC con un
 error que no dice nada del path real.
 
+Los parámetros que existen, para los que hacen falta los defaults: `-Arch`
+(`x64`/`x86`), `-Dest`, `-Work`, `-KeepWork`, `-OpenSslRoot`,
+`-StrawberryPerl`, `-AngleBin`, `-QtOfficialTarball`, `-SourcesFile`.
+
+**La receta falla ruidosamente si el resultado no está completo**: verifica que
+`libssl.lib` y `libcrypto.lib` estén donde `configure` los va a buscar antes de
+empezar. Ese canario existe porque una vez el bootstrap dejó las bibliotecas en
+`openssl\lib` y la receta las leía de `openssl\nss`: CMake configuró con un `LIB`
+vacío, `Qt5Network` se construyó **sin TLS**, y solo se notó en el paquete.
+
 ## Lo que hay que saber para no perder tres builds
 
-Estas cinco cosas costaron un build entero (~40 min) cada una. Están comentadas
-en la receta junto al sitio donde aplican.
+Estas cosas costaron un build entero (~40 min) cada una. Están comentadas en
+la receta junto al sitio donde aplican.
 
 **1. `syncqt` solo corre si hay `.git`.** `configure.bat` lo lanza únicamente si
 encuentra ese directorio. Sin él no se generan los forwarding headers y el build
@@ -143,6 +163,19 @@ contenido**, no por nombre. Qt las escribe en CamelCase (`qaudiodeviceinfo.h` �
 `QAudioDeviceInfo`); derivar el nombre del fichero produce `Qaudiodeviceinfo`,
 que no existe.
 
+**6. Las variables de PowerShell se tapan entre sí.** `$sources`, `$sslInc` y
+`$sslLib` se declararon primero como variables locales de la receta y luego
+como parámetros de la función que las usaba. Gana la segunda, y la receta leía
+una cadena vacía donde creía leer la ruta: `configure` recibía un `LIB` vacío y
+`Qt5Network` salía sin TLS, sin ningún error. La regla que lo evita: **el
+contenido va en `$script:` o en `$env:`, y un parámetro que reescriba el nombre
+de una variable existente es una trampa, no una abreviatura.**
+
+**7. `mkdir` antes de copiar dentro, no después.** `Copy-Item` a
+`arbol\bin\libEGL.dll` no crea el directorio destino. Con `-Dest` ya existente
+funcionaba y con uno limpio fallaba, que es la forma más difícil de fallar: el
+build que tú pruebas pasa y el de CI no.
+
 ## La regla que resume todo
 
 **Solo se reutiliza lo que se puede demostrar.** Un árbol de fuentes se reutiliza
@@ -164,10 +197,12 @@ venían de la rama KDE, y la diferencia se podía medir (SQLite 3.49.1 contra
 | `watch-kde.yml` | Compara la rama con lo fijado, cada lunes. Si hay commit nuevo, abre issue **y lanza la reconstrucción**. |
 | `rebuild.yml` | Compila x64 y x86, verifica el BOM y publica una release. A mano o disparado por el watcher. |
 
-El ciclo es automático **hasta el punto de consumo**: nadie empuja nada a tu
-proyecto sin que alguien lo decida, porque automatizar eso exigiría un token de
-otro repositorio y sería justo el acoplamiento invisible que hizo que el BOM
-antiguo mintiera.
+El ciclo automático termina en la release, no más allá. El ciclo **no** llega
+hasta el proyecto que consume el árbol: nadie empuja binarios a otro repositorio
+sin que alguien lo decida, porque automatizar eso exigiría un token de otro
+repositorio y sería justo el acoplamiento invisible que hizo que el BOM antiguo
+mintiera. Lo que sí hay, en el proyecto que consume, es un puntero
+(`sources.json`) a las fuentes fijadas de aquí.
 
 Cuando `invent.kde.org` devuelve 503 (pasa, por mantenimiento), el watcher avisa
 y no toca nada. No puede crear una referencia para "arreglar" un problema que no
